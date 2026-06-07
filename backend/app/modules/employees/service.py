@@ -10,6 +10,7 @@ Key rules:
   - Terminating an employee sets is_active=False and termination_date
   - Terminated employee's user account is also deactivated
   - Historical data (timeclock, payroll) is never deleted
+  - hire_date cannot be in the future (create & update)
 """
 
 import uuid
@@ -25,13 +26,17 @@ from app.core.exceptions import BadRequestException, NotFoundException
 
 class EmployeeService:
 
-    # ── Create ───────────────────────────────────────────────────────────────
+    # -- Create ---------------------------------------------------------------
 
     async def create_employee(self, db: AsyncSession, data: EmployeeCreateSchema) -> Employee:
         """
         Create a new employee profile.
         Optionally creates a linked User account for system access.
         """
+
+        # Gelecek tarihli ise giris kabul edilmez.
+        if data.hire_date and data.hire_date > date.today():
+            raise BadRequestException("Ise giris tarihi gelecekte olamaz.")
 
         # Check email uniqueness among active employees
         if data.email:
@@ -62,7 +67,7 @@ class EmployeeService:
             existing_user = existing_user.scalar_one_or_none()
 
             if existing_user:
-                # If this user is already linked to an employee, block — prevents
+                # If this user is already linked to an employee, block -- prevents
                 # the unique-constraint crash on employees.user_id.
                 linked = await db.execute(
                     select(Employee).where(Employee.user_id == existing_user.id)
@@ -125,7 +130,7 @@ class EmployeeService:
         await db.flush()
         return employee
 
-    # ── Read ─────────────────────────────────────────────────────────────────
+    # -- Read -----------------------------------------------------------------
 
     async def get_employees_by_branch(self, db: AsyncSession, branch_id: str) -> list[Employee]:
         """Return all active employees for a branch."""
@@ -137,7 +142,7 @@ class EmployeeService:
         return result.scalars().all()
 
     async def get_inactive_by_branch(self, db: AsyncSession, branch_id: str) -> list[Employee]:
-        """Return terminated (inactive) employees for a branch — used by the
+        """Return terminated (inactive) employees for a branch -- used by the
         rehire flow so admins can bring back former staff."""
         result = await db.execute(
             select(Employee)
@@ -182,20 +187,22 @@ class EmployeeService:
             raise NotFoundException("No employee profile linked to this account.")
         return employee
 
-    # ── Update ───────────────────────────────────────────────────────────────
+    # -- Update ---------------------------------------------------------------
 
     async def update_employee(
         self, db: AsyncSession, employee_id: str, data: EmployeeUpdateSchema
     ) -> Employee:
         """Update employee profile fields."""
         employee = await self.get_employee(db, employee_id)
+        if data.hire_date and data.hire_date > date.today():
+            raise BadRequestException("Ise giris tarihi gelecekte olamaz.")
         for field, value in data.model_dump(exclude_none=True).items():
             setattr(employee, field, value)
         db.add(employee)
         await db.flush()
         return employee
 
-    # ── Terminate ────────────────────────────────────────────────────────────
+    # -- Terminate ------------------------------------------------------------
 
     async def terminate_employee(
         self,
@@ -240,7 +247,7 @@ class EmployeeService:
         db.add(employee)
         await db.flush()
 
-    # ── Reactivate (Rehire) ────────────────────────────────────────────────────
+    # -- Reactivate (Rehire) --------------------------------------------------
 
     async def reactivate_employee(
         self, db: AsyncSession, employee_id: str
@@ -253,7 +260,7 @@ class EmployeeService:
           - No OTHER active employee may already hold this email (would create a
             duplicate active identity in the same branch/company).
           - If the employee has a linked user account, no OTHER active user may
-            hold that email either — protects the auth-layer uniqueness.
+            hold that email either -- protects the auth-layer uniqueness.
 
         On success, the employee and its linked user account are re-enabled and
         the termination_date is cleared.

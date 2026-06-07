@@ -27,12 +27,13 @@ AUTH:
 ================================================================================
 """
 
+
+
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.security import decode_token
-from app.core.exceptions import UnauthorizedException
+from app.core.deps import get_current_user, require_role, assert_employee_access
+from app.modules.auth.models import User, UserRole
 from app.modules.employee_portal.announcements.schemas import (
     AnnouncementCreateSchema,
     AnnouncementUpdateSchema,
@@ -41,40 +42,27 @@ from app.modules.employee_portal.announcements.schemas import (
 from app.modules.employee_portal.announcements.service import announcement_service
 
 router = APIRouter(prefix="/announcements", tags=["Announcements"])
-security = HTTPBearer()
 
+staff = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Decode and validate the Bearer token; return the token payload."""
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise UnauthorizedException("Invalid or expired token.")
-    return payload
-
-
-# --- Create (manager) ---
 
 @router.post("", response_model=AnnouncementResponseSchema)
 async def create_announcement(
     data: AnnouncementCreateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Manager publishes a new announcement (created_by = token user)."""
     return await announcement_service.create_announcement(
-        db, creator_id=current_user["sub"], data=data
+        db, creator_id=current_user.id, data=data
     )
 
-
-# --- Read ---
 
 @router.get("/company/{company_id}", response_model=list[AnnouncementResponseSchema])
 async def list_by_company(
     company_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Manager view: all announcements for a company, including hidden ones."""
     return await announcement_service.get_by_company(db, company_id)
 
 
@@ -82,9 +70,9 @@ async def list_by_company(
 async def get_feed(
     employee_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Employee feed: active, company-wide + branch-targeted announcements."""
+    await assert_employee_access(db, current_user, employee_id)
     return await announcement_service.get_feed_for_employee(db, employee_id)
 
 
@@ -92,20 +80,16 @@ async def get_feed(
 async def get_announcement(
     announcement_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Get a single announcement by ID."""
     return await announcement_service.get_announcement(db, announcement_id)
 
-
-# --- Update / Hide ---
 
 @router.put("/{announcement_id}", response_model=AnnouncementResponseSchema)
 async def update_announcement(
     announcement_id: str,
     data: AnnouncementUpdateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Edit an announcement or hide it (is_active = False)."""
     return await announcement_service.update_announcement(db, announcement_id, data)

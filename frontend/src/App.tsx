@@ -296,6 +296,7 @@ const navItems = [
   { id: "workforce", label: "Workforce", icon: "👥" },
   { id: "inventory", label: "Inventory", icon: "📦" },
   { id: "timeclock", label: "Time Clock", icon: "⏱️" },
+  { id: "payroll", label: "Bordro", icon: "💰" },
 ];
 
 function Sidebar({ active, onNavigate, user, onLogout, onChangePassword }: {
@@ -1653,6 +1654,278 @@ function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
+
+
+// --- Payroll Page ---
+const AYLAR = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+
+function PayrollPage({ token }: { token: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const [branches, setBranches] = useState<any[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<any>(null);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [selectedEmp, setSelectedEmp] = useState<any>(null);
+  const [year, setYear] = useState(2026);
+  const [month, setMonth] = useState(1);
+  const [slips, setSlips] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState<{ msg: string; kind: "error" | "success" } | null>(null);
+
+  const showToast = (msg: string, kind: "error" | "success" = "error") => {
+    setToast({ msg, kind });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // Backend hata mesajlarını Türkçeleştir + ay adıyla göster.
+  const trError = (detail: string): string => {
+    if (!detail) return "Bordro çalıştırılamadı.";
+    const m = detail.match(/Missing prior months \[([\d,\s]+)\]/);
+    if (m) {
+      const months = m[1].split(",").map(s => AYLAR[parseInt(s.trim()) - 1]).filter(Boolean);
+      return `Önce şu ayları çalıştır: ${months.join(", ")} (aylar sırayla çalıştırılmalı).`;
+    }
+    if (detail.includes("not employed")) return "Çalışan bu ay henüz işe başlamamış.";
+    if (detail.includes("no base_salary")) return "Çalışanın brüt maaşı tanımlı değil.";
+    return detail;
+  };
+
+  // Bugünün ayı (2026 sabit yıl varsayımıyla; ileride yıl da parametre olur).
+  const currentMonth = new Date().getMonth() + 1;
+  const currentYear = new Date().getFullYear();
+  // Bu yıl için çalıştırılabilir en son ay (gelecek aylar kapalı).
+  const maxRunnableMonth = (yr: number) => (yr < currentYear ? 12 : yr > currentYear ? 0 : currentMonth);
+
+  // Bir sonraki çalıştırılması gereken ay — kayıtlı son ayın bir sonrası, ama bugünü aşmaz.
+  const nextMonthToRun = (existing: any[], hireDate: string | null): number => {
+    const hireMonth = hireDate ? new Date(hireDate).getMonth() + 1 : 1;
+    const start = hireMonth;
+    const cap = maxRunnableMonth(year);
+    if (existing.length === 0) return Math.min(start, cap || start);
+    const maxMonth = Math.max(...existing.map(s => s.month));
+    return Math.min(maxMonth + 1, 12, cap || 12);
+  };
+
+  const loadBranches = async () => {
+    setLoading(true);
+    try {
+      const cr = await axios.get(`${API_URL}/companies`, { headers });
+      const all: any[] = [];
+      for (const c of cr.data) {
+        const br = await axios.get(`${API_URL}/companies/${c.id}/branches`, { headers });
+        br.data.forEach((b: any) => all.push({ ...b, company_name: c.name }));
+      }
+      setBranches(all);
+    } catch { } finally { setLoading(false); }
+  };
+  const loadEmployees = async (branchId: string) => {
+    try { const res = await axios.get(`${API_URL}/employees/branch/${branchId}`, { headers }); setEmployees(res.data); }
+    catch { }
+  };
+  const loadSlips = async (empId: string, yr: number, emp?: any) => {
+    try {
+      const res = await axios.get(`${API_URL}/payroll/employee/${empId}/${yr}`, { headers });
+      setSlips(res.data);
+      const e = emp || selectedEmp;
+      if (e) setMonth(nextMonthToRun(res.data, e.hire_date));
+    } catch { setSlips([]); }
+  };
+  useState(() => { loadBranches(); });
+
+  const selectBranch = (b: any) => { setSelectedBranch(b); setSelectedEmp(null); setSlips([]); loadEmployees(b.id); };
+  const selectEmp = (e: any) => { setSelectedEmp(e); setSlips([]); loadSlips(e.id, year, e); };
+
+  // İşe girişten bugüne kadar çalıştırılabilecek son ay (gelecek aylar hariç).
+  const targetMonth = (): number => {
+    if (!selectedEmp) return 0;
+    const cap = maxRunnableMonth(year);          // bu yıl: bugünün ayı; geçmiş yıl: 12
+    return cap; // her zaman bugüne kadar hesapla
+  };
+
+  // En son hesaplanmış ay (kayıt varsa).
+  const lastDoneMonth = (): number => (slips.length ? Math.max(...slips.map(s => s.month)) : 0);
+
+  // Çalıştırılacak bir şey var mı? (bugüne kadar eksik ay varsa)
+  // Çalışanın bu yıl içindeki ilk bordro ayı (işe giriş ayı; sonraki yılsa 99 = bu yıl yok).
+  const empStartMonth = (): number => {
+    if (!selectedEmp || !selectedEmp.hire_date) return 1;
+    const hd = new Date(selectedEmp.hire_date);
+    return hd.getFullYear() === year ? hd.getMonth() + 1 : (hd.getFullYear() > year ? 99 : 1);
+  };
+
+  // Çalışan bugüne kadar işe başlamış mı?
+  const hasStarted = (): boolean => {
+    if (!selectedEmp) return false;
+    return empStartMonth() <= targetMonth();
+  };
+
+  // Çalıştırılacak bir şey var mı? (işe başlamış VE bugüne kadar eksik ay varsa)
+  const hasPending = (): boolean => {
+    if (!selectedEmp || !hasStarted()) return false;
+    return lastDoneMonth() < targetMonth();
+  };
+
+  const runMonth = async () => {
+    if (!selectedEmp) return;
+    const tgt = targetMonth();
+    setRunning(true); setError("");
+    try {
+      const res = await axios.post(`${API_URL}/payroll/run-through`, { employee_id: selectedEmp.id, year, month: tgt }, { headers });
+      setSlips(res.data);
+      showToast(`Bordrolar ${AYLAR[tgt-1]} ayına kadar güncel.`, "success");
+    } catch (err: any) {
+      showToast(trError(err.response?.data?.detail), "error");
+    } finally { setRunning(false); }
+  };
+
+  const fmt = (n: any) => Number(n).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const cols: [string, string][] = [
+    ["Brüt", "gross"],
+    ["SSK İşçi", "sgk_employee"],
+    ["İşsizlik İşçi", "unemployment_employee"],
+    ["Gelir Vergisi", "income_tax_gross"],
+    ["Damga Vergisi", "stamp_tax_gross"],
+    ["Kümülatif Matrah", "cumulative_base_after"],
+    ["Net", "net_salary"],
+    ["AÜ Gelir V. İstisnası", "income_tax_exemption"],
+    ["AÜ Damga İstisnası", "stamp_tax_exemption"],
+    ["SSK İşveren", "sgk_employer"],
+    ["İşsizlik İşveren", "unemployment_employer"],
+    ["Toplam Maliyet", "employer_cost"],
+  ];
+
+  return (
+    <div>
+      {toast && (
+        <div style={{
+          position:"fixed", top:24, right:24, zIndex:1000,
+          background: toast.kind==="success" ? "#0a0a0a" : "#dc2626",
+          color:"white", padding:"14px 20px", borderRadius:12,
+          fontSize:14, fontWeight:600, maxWidth:380,
+          boxShadow:"0 8px 32px rgba(0,0,0,0.25)",
+          display:"flex", alignItems:"center", gap:10,
+        }}>
+          <span>{toast.kind==="success" ? "✓" : "⚠"}</span>
+          <span>{toast.msg}</span>
+        </div>
+      )}
+      <div className="page-header">
+        <h1 className="page-title">Bordro</h1>
+        <p className="page-subtitle">Brütten nete maaş hesabı — SGK & vergi uyumlu, aylık.</p>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"220px 1fr",gap:24}}>
+        <div>
+          <div className="section-label">Şubeler</div>
+          {loading ? <p style={{fontSize:14,color:"#9b9b93"}}>Yükleniyor...</p>
+          : branches.length === 0 ? <div className="empty-state" style={{padding:24}}><p className="empty-state-text">Şube yok.</p></div>
+          : <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+              {branches.map(b => (
+                <button key={b.id} className={`list-item ${selectedBranch?.id===b.id?"selected":""}`} onClick={() => selectBranch(b)}>
+                  <div className="list-item-title">{b.name}</div>
+                  <div className="list-item-sub">{b.company_name}</div>
+                </button>
+              ))}
+            </div>}
+
+          {selectedBranch && (
+            <>
+              <div className="section-label">Çalışanlar</div>
+              {employees.length === 0 ? <div className="empty-state" style={{padding:24}}><p className="empty-state-text">Çalışan yok.</p></div>
+              : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {employees.map(e => (
+                    <button key={e.id} className={`list-item ${selectedEmp?.id===e.id?"selected":""}`} onClick={() => selectEmp(e)}>
+                      <div className="list-item-title">{e.first_name} {e.last_name}</div>
+                      <div className="list-item-sub">{e.base_salary != null ? `₺${fmt(e.base_salary)} brüt` : "Maaş tanımsız"}</div>
+                    </button>
+                  ))}
+                </div>}
+            </>
+          )}
+        </div>
+
+        <div>
+          {!selectedEmp ? (
+            <div className="empty-state"><p className="empty-state-text">Bordro için bir çalışan seç.</p></div>
+          ) : (
+            <>
+              <div className="app-card" style={{padding:20,marginBottom:20}}>
+                <div style={{display:"flex",alignItems:"flex-end",gap:12,flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontFamily:"'Bricolage Grotesque',sans-serif",fontSize:18,fontWeight:800,color:"#0a0a0a",letterSpacing:"-0.02em",marginBottom:4}}>{selectedEmp.first_name} {selectedEmp.last_name}</div>
+                    <div style={{fontSize:13,color:"#9b9b93"}}>
+                      {selectedEmp.base_salary != null ? `₺${fmt(selectedEmp.base_salary)} brüt/ay` : "Maaş tanımsız"}
+                      {selectedEmp.hire_date && ` · İşe giriş: ${new Date(selectedEmp.hire_date).toLocaleDateString("tr-TR")}`}
+                    </div>
+                  </div>
+                  <div style={{flex:1}} />
+                  <div>
+                    <label className="app-label">Yıl</label>
+                    <select value={year} onChange={(e) => { const y = parseInt(e.target.value); setYear(y); loadSlips(selectedEmp.id, y); }} className="app-input" style={{width:100}}>
+                      <option value={2026}>2026</option>
+                    </select>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={runMonth}
+                    disabled={running || selectedEmp.base_salary == null || !hasPending()}
+                    style={{padding:"11px 20px"}}
+                  >
+                    {running
+                      ? "Çalışıyor..."
+                      : !hasStarted()
+                        ? "Henüz işe başlamadı"
+                        : !hasPending()
+                          ? `${AYLAR[targetMonth()-1]} ayına kadar güncel`
+                          : lastDoneMonth() === 0
+                            ? `Bordro Çalıştır (→ ${AYLAR[targetMonth()-1]})`
+                            : `${AYLAR[lastDoneMonth()]} – ${AYLAR[targetMonth()-1]} Çalıştır`}
+                  </button>
+                </div>
+                {selectedEmp.base_salary == null && <div className="inline-error" style={{marginTop:14}}>Bu çalışanın brüt maaşı tanımlı değil. Önce Companies'ten maaş gir.</div>}
+              </div>
+
+              <div className="section-label">{year} Bordroları</div>
+              {slips.length === 0 ? (
+                <div className="empty-state"><p className="empty-state-text">Henüz bordro yok. Bir ay seçip "Bordro Çalıştır"a bas. Aylar sırayla çalıştırılmalı (Ocak → Şubat → ...).</p></div>
+              ) : (
+                <div className="app-card" style={{overflowX:"auto"}}>
+                  <table style={{borderCollapse:"collapse",width:"100%",fontSize:12.5,whiteSpace:"nowrap"}}>
+                    <thead>
+                      <tr style={{borderBottom:"2px solid #e5e4e0"}}>
+                        <th style={{textAlign:"left",padding:"12px 14px",fontWeight:700,color:"#5a5a54",position:"sticky",left:0,background:"white"}}>Ay</th>
+                        <th style={{textAlign:"right",padding:"12px 10px",fontWeight:700,color:"#5a5a54"}}>Gün</th>
+                        {cols.map(([label]) => (
+                          <th key={label} style={{textAlign:"right",padding:"12px 10px",fontWeight:700,color:"#5a5a54"}}>{label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {slips.map(s => (
+                        <tr key={s.id} style={{borderBottom:"1px solid #f2f1ee"}}>
+                          <td style={{padding:"11px 14px",fontWeight:600,color:"#0a0a0a",position:"sticky",left:0,background:"white"}}>{AYLAR[s.month-1]}</td>
+                          <td style={{padding:"11px 10px",textAlign:"right",color:"#9b9b93"}}>{s.sgk_days}</td>
+                          {cols.map(([label, key]) => (
+                            <td key={label} style={{padding:"11px 10px",textAlign:"right",color: key==="net_salary" ? "#00a843" : "#0a0a0a", fontWeight: key==="net_salary"?700:400}}>{fmt(s[key])}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
 // --- Main App ---
 function MainApp({ user, token, onLogout }: { user: User; token: string; onLogout: () => void }) {
   const [page, setPage] = useState("dashboard");
@@ -1660,7 +1933,7 @@ function MainApp({ user, token, onLogout }: { user: User; token: string; onLogou
 
   const pageTitle: Record<string,string> = {
     dashboard:"Dashboard", companies:"Companies",
-    workforce:"Workforce", inventory:"Inventory", timeclock:"Time Clock"
+    workforce:"Workforce", inventory:"Inventory", timeclock:"Time Clock", payroll:"Bordro"
   };
 
   const renderPage = () => {
@@ -1670,6 +1943,7 @@ function MainApp({ user, token, onLogout }: { user: User; token: string; onLogou
       case "workforce": return <WorkforcePage token={token} />;
       case "inventory": return <InventoryPage token={token} />;
       case "timeclock": return <TimeClockPage token={token} />;
+      case "payroll": return <PayrollPage token={token} />;
       default: return <DashboardPage user={user} />;
     }
   };

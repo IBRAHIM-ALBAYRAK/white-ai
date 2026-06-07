@@ -31,13 +31,14 @@ AUTH:
 ================================================================================
 """
 
+
+
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.security import decode_token
-from app.core.exceptions import UnauthorizedException
+from app.core.deps import get_current_user, require_role, assert_employee_access
+from app.modules.auth.models import User, UserRole
 from app.modules.employee_portal.shift_swaps.schemas import (
     SwapCreateSchema,
     SwapRespondSchema,
@@ -47,7 +48,8 @@ from app.modules.employee_portal.shift_swaps.schemas import (
 from app.modules.employee_portal.shift_swaps.service import shift_swap_service
 
 router = APIRouter(prefix="/shift-swaps", tags=["Shift Swaps"])
-security = HTTPBearer()
+
+staff = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 
 
 class CancelSwapSchema(BaseModel):
@@ -55,35 +57,23 @@ class CancelSwapSchema(BaseModel):
     requester_id: str
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Decode and validate the Bearer token; return the token payload."""
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise UnauthorizedException("Invalid or expired token.")
-    return payload
-
-
-# --- Create (requester) ---
-
 @router.post("", response_model=SwapResponseSchema)
 async def create_swap(
     data: SwapCreateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Requester opens a new shift swap request."""
+    await assert_employee_access(db, current_user, data.requester_id)
     return await shift_swap_service.create_swap(db, data)
 
-
-# --- Read ---
 
 @router.get("/employee/{employee_id}", response_model=list[SwapResponseSchema])
 async def list_by_employee(
     employee_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Swaps where the employee is requester or target ('My Swaps' view)."""
+    await assert_employee_access(db, current_user, employee_id)
     return await shift_swap_service.get_by_employee(db, employee_id)
 
 
@@ -91,9 +81,8 @@ async def list_by_employee(
 async def list_by_branch(
     branch_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """All swaps in a branch (manager's full view)."""
     return await shift_swap_service.get_by_branch(db, branch_id)
 
 
@@ -101,9 +90,8 @@ async def list_by_branch(
 async def list_pending_approval(
     branch_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Manager approval queue: ACCEPTED swaps awaiting the manager's decision."""
     return await shift_swap_service.get_pending_manager_approval(db, branch_id)
 
 
@@ -111,50 +99,42 @@ async def list_pending_approval(
 async def get_swap(
     swap_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Get a single swap request by ID."""
     return await shift_swap_service.get_swap(db, swap_id)
 
-
-# --- Respond (coworker, stage 1) ---
 
 @router.put("/{swap_id}/respond", response_model=SwapResponseSchema)
 async def respond_swap(
     swap_id: str,
     data: SwapRespondSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Target coworker accepts or declines a pending swap (stage 1)."""
+    await assert_employee_access(db, current_user, data.target_id)
     return await shift_swap_service.respond_swap(db, swap_id, data)
 
-
-# --- Decide (manager, stage 2) ---
 
 @router.put("/{swap_id}/decide", response_model=SwapResponseSchema)
 async def decide_swap(
     swap_id: str,
     data: SwapDecideSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Manager approves or rejects an accepted swap (stage 2, final)."""
     return await shift_swap_service.decide_swap(
-        db, swap_id=swap_id, manager_id=current_user["sub"], data=data
+        db, swap_id=swap_id, manager_id=current_user.id, data=data
     )
 
-
-# --- Cancel (requester) ---
 
 @router.put("/{swap_id}/cancel", response_model=SwapResponseSchema)
 async def cancel_swap(
     swap_id: str,
     data: CancelSwapSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Requester withdraws their own swap (while pending or accepted)."""
+    await assert_employee_access(db, current_user, data.requester_id)
     return await shift_swap_service.cancel_swap(
         db, swap_id=swap_id, requester_id=data.requester_id
     )

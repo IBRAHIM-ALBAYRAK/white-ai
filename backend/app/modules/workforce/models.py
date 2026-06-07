@@ -56,7 +56,7 @@ class ShiftAssignment(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     shift_id: Mapped[str] = mapped_column(String, ForeignKey("shifts.id"), nullable=False)
-    employee_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    employee_id: Mapped[str] = mapped_column(String, ForeignKey("employees.id"), nullable=False)
     status: Mapped[AssignmentStatus] = mapped_column(SAEnum(AssignmentStatus), default=AssignmentStatus.ASSIGNED, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

@@ -34,13 +34,14 @@ AUTH:
 ================================================================================
 """
 
+
+
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.security import decode_token
-from app.core.exceptions import UnauthorizedException
+from app.core.deps import get_current_user, require_role, assert_employee_access
+from app.modules.auth.models import User, UserRole
 from app.modules.employee_portal.leaves.schemas import (
     LeaveCreateSchema,
     LeaveReviewSchema,
@@ -49,7 +50,8 @@ from app.modules.employee_portal.leaves.schemas import (
 from app.modules.employee_portal.leaves.service import leave_service
 
 router = APIRouter(prefix="/leaves", tags=["Leaves"])
-security = HTTPBearer()
+
+staff = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 
 
 class CancelLeaveSchema(BaseModel):
@@ -57,35 +59,23 @@ class CancelLeaveSchema(BaseModel):
     employee_id: str
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Decode and validate the Bearer token; return the token payload."""
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise UnauthorizedException("Invalid or expired token.")
-    return payload
-
-
-# --- Create ---
-
 @router.post("", response_model=LeaveResponseSchema)
 async def create_leave(
     data: LeaveCreateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Employee submits a new leave request."""
+    await assert_employee_access(db, current_user, data.employee_id)
     return await leave_service.create_leave(db, data)
 
-
-# --- Read ---
 
 @router.get("/employee/{employee_id}", response_model=list[LeaveResponseSchema])
 async def list_by_employee(
     employee_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """List all leave requests belonging to one employee (employee's own view)."""
+    await assert_employee_access(db, current_user, employee_id)
     return await leave_service.get_by_employee(db, employee_id)
 
 
@@ -93,9 +83,8 @@ async def list_by_employee(
 async def list_by_branch(
     branch_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """List all leave requests in a branch (manager's full view)."""
     return await leave_service.get_by_branch(db, branch_id)
 
 
@@ -103,9 +92,8 @@ async def list_by_branch(
 async def list_pending_by_branch(
     branch_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """List only pending requests in a branch (manager's approval queue, FIFO)."""
     return await leave_service.get_pending_by_branch(db, branch_id)
 
 
@@ -113,40 +101,34 @@ async def list_pending_by_branch(
 async def get_leave(
     leave_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Get a single leave request by ID."""
     return await leave_service.get_leave(db, leave_id)
 
-
-# --- Review (manager) ---
 
 @router.put("/{leave_id}/review", response_model=LeaveResponseSchema)
 async def review_leave(
     leave_id: str,
     data: LeaveReviewSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Manager approves or rejects a pending leave request."""
     return await leave_service.review_leave(
         db,
         leave_id=leave_id,
-        reviewer_id=current_user["sub"],
+        reviewer_id=current_user.id,
         data=data,
     )
 
-
-# --- Cancel (employee) ---
 
 @router.put("/{leave_id}/cancel", response_model=LeaveResponseSchema)
 async def cancel_leave(
     leave_id: str,
     data: CancelLeaveSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Employee cancels their own pending leave request."""
+    await assert_employee_access(db, current_user, data.employee_id)
     return await leave_service.cancel_leave(
         db,
         leave_id=leave_id,

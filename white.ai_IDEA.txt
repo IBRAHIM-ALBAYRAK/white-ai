@@ -141,3 +141,8 @@ Otomatik sipariş tetikliyor tedarikçiye
 Sonuç: Müdür deneyimine göre tahmin yapmak yerine sisteme soruyor.
 
 
+
+
+
+
+

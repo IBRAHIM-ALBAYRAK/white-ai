@@ -33,12 +33,13 @@ NOTE ON FILE UPLOAD:
 ================================================================================
 """
 
+
+
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.security import decode_token
-from app.core.exceptions import UnauthorizedException
+from app.core.deps import get_current_user, require_role, assert_employee_access
+from app.modules.auth.models import User, UserRole
 from app.modules.employee_portal.documents.schemas import (
     DocumentCreateSchema,
     DocumentUpdateSchema,
@@ -47,40 +48,27 @@ from app.modules.employee_portal.documents.schemas import (
 from app.modules.employee_portal.documents.service import document_service
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
-security = HTTPBearer()
 
+staff = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Decode and validate the Bearer token; return the token payload."""
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise UnauthorizedException("Invalid or expired token.")
-    return payload
-
-
-# --- Create (HR) ---
 
 @router.post("", response_model=DocumentResponseSchema)
 async def create_document(
     data: DocumentCreateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """HR registers a new employee document (uploaded_by = token user)."""
     return await document_service.create_document(
-        db, uploader_id=current_user["sub"], data=data
+        db, uploader_id=current_user.id, data=data
     )
 
-
-# --- Read ---
 
 @router.get("/employee/{employee_id}", response_model=list[DocumentResponseSchema])
 async def list_by_employee(
     employee_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Manager / HR view: all documents for an employee, including hidden ones."""
     return await document_service.get_by_employee(db, employee_id)
 
 
@@ -88,9 +76,9 @@ async def list_by_employee(
 async def list_visible_for_employee(
     employee_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Employee view: only documents marked visible to the employee."""
+    await assert_employee_access(db, current_user, employee_id)
     return await document_service.get_visible_for_employee(db, employee_id)
 
 
@@ -98,33 +86,26 @@ async def list_visible_for_employee(
 async def get_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Get a single document by ID."""
     return await document_service.get_document(db, document_id)
 
-
-# --- Update ---
 
 @router.put("/{document_id}", response_model=DocumentResponseSchema)
 async def update_document(
     document_id: str,
     data: DocumentUpdateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Edit document metadata or toggle visibility to the employee."""
     return await document_service.update_document(db, document_id, data)
 
-
-# --- Delete ---
 
 @router.delete("/{document_id}")
 async def delete_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(staff),
 ):
-    """Remove a document (metadata). Used e.g. when a file was wrongly uploaded."""
     await document_service.delete_document(db, document_id)
     return {"message": "Document deleted."}
