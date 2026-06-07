@@ -1,0 +1,143 @@
+WHITE.AI — GLOBAL HOSPITALITY OPERATIONS PLATFORM
+
+1) WHITE.AI — WORKFORCE MANAGEMENT MODULE
+
+Workforce Management — Vardiya Planlama
+Problem: 50 şuben var, her şubede 20 çalışan. Kim ne zaman çalışacak?
+
+Müdür sisteme giriyor, haftanın vardiyalarını sürükle-bırak ile oluşturuyor
+Sistem otomatik uyarıyor: "Ali'nin bu hafta 45 saati doldu, fazla mesai ücretine giriyor"
+Çalışan telefona bildirim alıyor: "Cumartesi 09:00-17:00 vardiyasın"
+Çalışan uygulama üzerinden izin talep ediyor, müdür onaylıyor
+Birisi hastalanırsa sistem "şu kişi müsait, çağır" öneriyor
+
+Sonuç: Müdür WhatsApp'ta kim çalışacak diye sormak yerine sisteme bakıyor.
+
+
+
+2) WHITE.AI — HR & Payroll — Bordro ve İK
+
+Problem: 200 çalışanın maaşını hesapla, vergi kes, bordro çıkar.
+
+Çalışan işe başladığında sisteme giriliyor: maaş, sözleşme tipi, vergi bilgisi
+Ay sonunda sistem otomatik hesaplıyor: kaç saat çalıştı × saatlik ücret + fazla mesai + kesintiler
+Bordro PDF olarak üretiyor, muhasebe yazılımına aktarıyor
+İşe alım sürecinde: iş ilanı yayınla → başvuruları topla → mülakata çağır → sözleşme imzalat — hepsi sistem içinde
+Yasal değişiklik olduğunda (asgari ücret artışı gibi) sistem otomatik güncelliyor
+
+Sonuç: Muhasebeci Excel'de saatler harcamak yerine bir tuşa basıyor.
+
+
+
+
+3) WHITE.AI — Envanter — Stok ve Maliyet
+
+Problem: Mutfakta ne kadar malzeme var, ne kadar harcıyoruz, kar marjı nedir?
+
+Stok takibi:
+
+Sabah depo sayımı yapılıyor, tablet üzerinden sisteme giriliyor
+Gün içinde satış oldukça sistem otomatik düşüyor: "50 burger sattın → 50 × 150g et = 7.5kg et azaldı"
+Kritik seviyeye düşünce uyarı veriyor: "Et stoğu 3 güne yetecek"
+
+Tarif maliyeti:
+
+Burger tarifini sisteme giriyorsun: ekmek 0.5₺, et 8₺, peynir 2₺, sos 0.3₺ = toplam 10.8₺
+Burger'i 45₺'ye satıyorsun → sistem kar marjını gösteriyor: %76
+Tedarikçi et fiyatını artırdığında sistem anında uyarıyor: "Burger marjın %76'dan %71'e düştü"
+
+Tedarikçi siparişi:
+
+Sistem stok seviyesine bakıyor, satış hızına bakıyor ve diyor: "Salı günü 20kg et siparişi ver"
+Sipariş sisteme tıkla → tedarikçiye otomatik gidiyor → mal geldiğinde sisteme giriş
+
+Sonuç: Mutfak müdürü neyin bittiğini tahmin etmek yerine sisteme bakıyor.
+
+
+
+4) WHITE.AI — Time Clock — Dijital Giriş-Çıkış Saati
+
+Problem: Çalışan gerçekten saat 09:00'da mı geldi, yoksa müdür mi girdi sisteme?
+
+Tablette yüz tanıma veya parmak izi ile giriş-çıkış
+"Ghost punching" önlüyor — Ali, Veli adına giriş yapamıyor
+GPS ile doğrulama: "Bu çalışan şubeden 2km uzakta giriş yapmış" uyarısı
+Giriş-çıkış verileri otomatik bordro hesabına gidiyor, elle giriş yok
+
+Rakipler yapıyor mu: Bazıları basit versiyon sunuyor ama Fourth'un biyometrik + GPS kombinasyonu çok az rakipte var.
+
+
+
+5) WHITE.AI — Earned Wage Access — Kazanılan Maaşa Erken Erişim
+
+Problem: Çalışan maaş günü beklemek yerine bugün para lazım.
+
+Çalışan uygulama üzerinden avans talebi oluşturuyor
+Örneğin “250$ çekmek istiyorum” diyor
+Talep işletme müdürünün paneline düşüyor
+
+Müdür:
+
+Onaylarsa → 250$ ödeme yapılır
+Reddederse → talep kapanır
+Revize ederse → örneğin 150$ uygun der
+
+Sistem bunu çalışana bildiriyor:
+“Talebiniz 150$ olarak güncellendi, kabul ediyor musunuz?”
+
+Çalışan kabul ederse ödeme yapılır
+Maaş günü verilen tutar maaştan otomatik düşülür
+Çalışan için klasik borç değil, kontrollü erken erişim modeli olur
+
+
+
+6) WHITE.AI — Manager LogBook — Dijital Vardiya Defteri
+
+Problem: Gece müdürü sabah müdürüne ne bıraktı? Kağıt defter kaybolur, unutulur.
+
+Müdür vardiya sonunda dijital not düşüyor: "Soğutucu arızalandı, servis çağrıldı. Yarın kontrol et."
+Bir sonraki müdür sisteme girince önce bu notları görüyor
+Kritik notlara "acil" etiketi koyulabiliyor, SMS ile bir üst yöneticiye gidiyor
+Tüm notlar arşivleniyor, "geçen ay bu sorun kaç kez oldu?" sorgulanabiliyor
+Zincir genelinde: Genel müdür tüm şubelerin günlük loglarını tek ekranda görüyor
+
+
+
+
+7) WHITE.AI — Business Intelligence — İleri Analitik
+
+Problem: 100 şubem var, hangisi iyi gidiyor, hangisi kötü, neden?
+
+Tüm şubelerin verisi tek dashboardda toplanıyor
+Karşılaştırmalı analiz: "Kadıköy şubesi aynı metrekarede Beşiktaş'tan %20 az satıyor — neden?"
+Labor cost / revenue oranı şube şube gösteriyor
+Menu engineering: "Şu ürün en yüksek marjlı ama en az satılan, neden menüde öne çıkarmıyoruz?"
+Trend analizi: "Her Cuma akşamı saat 20:00-22:00 arası tüm şubeler aşırı yoğun ama personel yetersiz"
+ 
+
+
+
+8) WHITE.AI — AI  — Tahminleme
+
+Son katman. Geçmiş veriyi alıyor, gelecek için tahmin üretiyor.
+Nasıl çalışıyor:
+Satış tahmini:
+
+Sistem 2 yıllık veriyi inceliyor: hangi gün, hangi saatte ne kadar sattın
+Hava durumu API'sine bağlı: "Cuma yağmur yağacak, geçen yağmurlu Cumalarda satış %20 düştü"
+Yerel etkinlik takvimi: "Bu hafta sonu stadyumda maç var, o bölge şuben %40 daha yoğun olacak"
+Çıktı: "Bu Cumartesi 340 müşteri bekleniyor, 280 burger satarsın"
+
+Personel tahmini:
+
+Satış tahmininden personel ihtiyacı çıkarıyor: "340 müşteri için 8 kasiyer, 4 aşçı yeterli"
+Müdürün vardiya planına öneri sunuyor: "Cumartesi öğlen 3 kişi fazla açtın, 1 kişiyi kapat"
+
+Stok tahmini:
+
+"340 müşteri gelecek, ortalama sipariş değerine göre şu malzemeleri şu miktarda al"
+Otomatik sipariş tetikliyor tedarikçiye
+
+Sonuç: Müdür deneyimine göre tahmin yapmak yerine sisteme soruyor.
+
+

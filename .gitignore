@@ -1,0 +1,36 @@
+# --- Secrets / env (ASLA commit edilmez) ---
+.env
+.env.*
+*.env
+backend/.env
+frontend/.env
+
+# --- Python ---
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# --- Logs ---
+*.log
+npm-debug.log*
+
+# --- DB dumps / backups ---
+*.sql.bak
+*.dump

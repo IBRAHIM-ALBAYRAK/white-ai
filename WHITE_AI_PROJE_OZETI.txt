@@ -1,0 +1,406 @@
+================================================================
+WHITE.AI — PROJE ÖZETI
+Son güncelleme: 7 Haziran 2026
+================================================================
+
+================================================================
+1. PROJE ÖZETİ
+================================================================
+
+WHITE.AI: Türkiye pazarına yönelik AI destekli hospitality/işletme
+operasyon SaaS platformu.
+
+Rakipler:
+  Fourth  → ~$300M ARR (global, Türkiye'ye lokalize değil)
+  Deputy  → ~$100-150M ARR (global, Türkiye'ye lokalize değil)
+
+Rekabet avantajı: Türkiye lokalizasyonu (SGK, vergi dilimleri,
+mevzuat uyumu, tam Türkçe arayüz). Bunlar Türkiye'ye giremez çünkü
+mevzuata uyum ve lokalizasyon maliyeti çok yüksek.
+
+Hedef pazar : Türkiye, 5+ şubeli işletmeler
+Hedef müşteri: 10.000–15.000 işletme
+Fiyat hedefi : ~2.500 TL/şube/ay
+$5M ARR      → ~1.850 şirket, ortalama 3 şube
+
+Test müşterisi: Georgia Coffee & Chocolate (Georgia Yalı Gıda Ltd. Şti.)
+  Şubeler: Yalı Şubesi (Maltepe), Küçükçekmece Şubesi
+  Demo: Georgia'nın gerçek maaş verisiyle yapılacak.
+
+================================================================
+2. TEKNİK STACK & ÇALIŞTIRMA
+================================================================
+
+Backend : FastAPI + SQLAlchemy (async) + PostgreSQL + Redis (Docker)
+Frontend: React + TypeScript + Vite + TailwindCSS (inline styles)
+
+Proje dizini: ~/whiteai/
+  backend/   → FastAPI + Python
+  frontend/  → React + TypeScript + Vite
+  start.sh   → Tüm sistemi başlatan script
+
+Başlatma:
+  cd ~/whiteai && ./start.sh
+
+Adresler:
+  Backend  → http://127.0.0.1:8000  (API prefix: /api/v1)
+  Frontend → http://localhost:5173/app
+
+Python notu: python3 komutu kullanılır, python komutu YOK.
+Virtualenv:
+  cd ~/whiteai/backend && source venv/bin/activate
+
+Veritabanı:
+  Docker container : white_ai_postgres
+  Kullanıcı        : whiteai
+  Şifre            : whiteai123
+  Veritabanı       : whiteai_db
+  Port             : 5432
+
+DB GUI: DBeaver kurulu (localhost:5432 → whiteai_db bağlantısı)
+  Şema değişikliği sonrası DBeaver'da Ctrl+R ile yenile.
+
+Admin kullanıcı:
+  Email : admin@whiteai.com
+  Şifre : test1234
+  Rol   : SUPERADMIN
+
+================================================================
+3. MİMARİ KARARLAR
+================================================================
+
+3.1 User ≠ Employee ayrımı (Fourth/Deputy/Workday standardı)
+  - users tablosu: SADECE auth (email, hashed_password, role, is_active)
+    + company_id ve branch_id FK'leri de users'da
+  - employees tablosu: Tüm HR profili (tc_no, sgk_no, base_salary,
+    bank_iban, hire_date, position, department, contract_type, ...)
+  - employee.user_id nullable → sistem erişimi olmayan çalışan olabilir
+  - Terminate: employee.is_active=False + termination_date=today
+    + bağlı user varsa o da deaktive edilir
+  - Rehire: employee.is_active=True + termination_date temizlenir
+    + bağlı user varsa reaktive edilir
+
+3.2 UserRole: SUPERADMIN / OWNER / MANAGER / EMPLOYEE
+
+3.3 Hiyerarşi:
+  Company → Branch → Employee → TimeClock / Payroll
+
+3.4 Soft delete politikası:
+  İçi dolu hiçbir kayıt hard-delete edilmez (yasal saklama zorunluluğu).
+  Suspend (is_active=False) kullanılır.
+
+3.5 Şirket/Şube askıya alma (lifecycle) kuralları:
+  - Şirket askıya alınırsa: aktif çalışanların tümünün login'i kesilir.
+  - Şirket reactivate edilirse: SADECE şubesi de aktif olan çalışanların
+    login'i açılır (askıdaki şubedekiler kilitli kalır).
+  - Bir şube, parent şirketi askıdayken reactivate edilemez.
+
+3.6 Önemli import yolları:
+  app.modules.employees.models.Employee
+  app.modules.auth.models.User
+  DİKKAT: auth klasöründe __init__.py YOK, employees'te VAR.
+
+3.7 Dosya adı çakışması uyarısı:
+  company ve employees modüllerinde ikisinde de router.py var.
+  Kopyalarken hedef klasörü iki kez kontrol et (geçmişte karışıklık yaşandı).
+
+================================================================
+4. MİGRATION ALTYAPISI (Alembic)
+================================================================
+
+Alembic kuruldu ve çalışıyor.
+create_all KAPATILDI — main.py lifespan'da yorum satırı.
+Şema artık tamamen Alembic ile yönetiliyor.
+
+Teknik detay:
+  - Migration async değil sync çalışır.
+  - alembic/env.py, DATABASE_URL'deki +asyncpg'yi +psycopg2'ye çevirir.
+  - alembic/env.py içinde tüm modeller import edilmiş (main.py ile
+    birebir aynı liste olmalı).
+
+Mevcut baseline:
+  Revision : 99fb0ceb3a63
+  Durum    : stamp head ile işaretlendi (sıfır noktası)
+
+RUTİN — Model değiştirince şu adımları izle:
+  cd ~/whiteai/backend
+  source venv/bin/activate
+  alembic revision --autogenerate -m "açıklama"
+  alembic upgrade head
+
+================================================================
+5. TAMAMLANAN MODÜLLER
+================================================================
+
+5.1 AUTH — app/modules/auth/
+  POST /api/v1/auth/register
+  POST /api/v1/auth/login
+  POST /api/v1/auth/refresh
+  POST /api/v1/auth/logout
+  POST /api/v1/auth/change-password
+
+5.2 COMPANIES — app/modules/company/
+  Tablolar: companies, branches
+  CRUD + suspend / reactivate / delete
+  Şirket/şube askıya alınca bağlı çalışanların login'i kesilir.
+  Endpoints:
+    GET/POST   /api/v1/companies
+    GET/PATCH  /api/v1/companies/{id}
+    DELETE     /api/v1/companies/{id}
+    POST       /api/v1/companies/{id}/suspend
+    POST       /api/v1/companies/{id}/reactivate
+    GET/POST   /api/v1/companies/{id}/branches
+    PATCH      /api/v1/branches/{id}
+    POST       /api/v1/branches/{id}/suspend
+    POST       /api/v1/branches/{id}/reactivate
+    DELETE     /api/v1/branches/{id}
+
+5.3 WORKFORCE — app/modules/workforce/
+  Tablolar: shifts, shift_assignments
+  ShiftStatus: draft → published | cancelled
+  Endpoints:
+    POST   /api/v1/shifts
+    GET    /api/v1/shifts/branch/{id}
+    PUT    /api/v1/shifts/{id}
+    DELETE /api/v1/shifts/{id}
+
+5.4 INVENTORY — app/modules/inventory/
+  Tablolar: inventory_categories, inventory_suppliers,
+            inventory_products, inventory_stock_movements
+  MovementType: purchase / usage / waste / adjustment
+  Endpoints:
+    CRUD /api/v1/inventory/products
+    GET  /api/v1/inventory/products/branch/{id}
+    POST /api/v1/inventory/movements
+    GET  /api/v1/inventory/movements/{product_id}
+
+5.5 TIMECLOCK — app/modules/timeclock/
+  Tablo: timeclock_records
+  RecordStatus: open → completed | missing_checkout | adjusted
+  ÖNEMLİ: employee_id FK → employees.id (users.id DEĞİL)
+  Endpoints:
+    POST /api/v1/timeclock/checkin
+    POST /api/v1/timeclock/checkout/{record_id}
+    GET  /api/v1/timeclock/branch/{branch_id}
+    GET  /api/v1/timeclock/branch/{branch_id}/open
+    PUT  /api/v1/timeclock/adjust/{record_id}
+    PUT  /api/v1/timeclock/flag/{record_id}
+
+5.6 EMPLOYEES — app/modules/employees/
+  Tablo: employees
+  ContractType: full_time / part_time / temporary / intern
+  Endpoints:
+    POST   /api/v1/employees                          → oluştur (+ opsiyonel user account)
+    GET    /api/v1/employees/branch/{branch_id}
+    GET    /api/v1/employees/company/{company_id}
+    GET    /api/v1/employees/{employee_id}
+    PUT    /api/v1/employees/{employee_id}
+    DELETE /api/v1/employees/{employee_id}/terminate  ← admin şifre zorunlu
+    PUT    /api/v1/employees/{employee_id}/reactivate
+
+5.7 USERS — app/modules/users/ (sadece auth yönetimi)
+  Endpoints:
+    POST   /api/v1/users
+    GET    /api/v1/users/branch/{branch_id}
+    GET    /api/v1/users/company/{company_id}
+    GET    /api/v1/users/{user_id}
+    PUT    /api/v1/users/{user_id}
+    DELETE /api/v1/users/{user_id}/verified  ← admin şifre zorunlu
+
+5.8 EMPLOYEE PORTAL — app/modules/employee_portal/
+  Alt modüller: leaves / announcements / documents / shift_swaps
+  Durum: Backend altyapısı (modeller, router, schema, service) HAZIR.
+         Admin onay kuyruğu UI'ı henüz YOK (bekleyen işler listesinde).
+  Her alt modülün dizin yapısı:
+    __init__.py / models.py / schemas.py / service.py / router.py
+
+================================================================
+6. VERİTABANI TABLOSU ÖZETI
+================================================================
+
+users
+  id, email, hashed_password, role(userrole), first_name, last_name,
+  phone, company_id(FK), branch_id(FK), is_active, created_at, updated_at
+
+companies
+  id, name, email, phone, address, is_active, created_at, updated_at
+
+branches
+  id, company_id(FK), name, address, phone, latitude, longitude,
+  is_active, created_at, updated_at
+
+shifts
+  id, branch_id(FK), title, start_time, end_time, status(shiftstatus),
+  notes, created_at, updated_at
+
+shift_assignments
+  id, shift_id(FK), user_id(FK), status(assignmentstatus)
+
+inventory_categories, inventory_suppliers
+inventory_products
+  id, branch_id(FK), category_id(FK), supplier_id(FK), name, unit,
+  unit_cost, current_stock, min_stock_level, is_active
+
+inventory_stock_movements
+  id, product_id(FK), branch_id(FK), type(movementtype), quantity,
+  unit_cost, notes, created_at
+
+timeclock_records
+  id, branch_id(FK), employee_id(FK→employees.id), checked_in_at,
+  checked_out_at, total_minutes, status(recordstatus), notes, is_late,
+  created_at, updated_at
+
+employees
+  id, user_id(FK→users.id nullable), company_id(FK), branch_id(FK),
+  first_name, last_name, email, phone, tc_no, sgk_no, hire_date,
+  contract_type(contracttype), position, department,
+  base_salary(Numeric 12,2), bank_iban, is_active, termination_date,
+  created_at, updated_at
+
+(employee_portal alt tablolar: leaves, announcements, documents,
+ shift_swap_requests — modeller yazıldı, migration bekliyor)
+
+================================================================
+7. VERİTABANI MEVCUT DURUMU
+================================================================
+
+DB temizlendi — sadece admin@whiteai.com kullanıcısı var.
+Şirket / şube / çalışan kayıtları: 0 (sıfır).
+Sıfırdan veri girişiyle devam edilecek.
+Demo için Georgia Coffee & Chocolate verileri girilecek.
+
+================================================================
+8. SIRADAKİ ADIM — TEK ODAK: HR & PAYROLL MODÜLÜ
+================================================================
+
+WHITE.AI'ın Fourth/Deputy'ye karşı ASIL SATIŞ KOZU bu modül.
+Türkiye mevzuatına tam uyum, rakiplerin sunamadığı şey.
+
+Kapsam:
+  - Brüt → Net maaş hesabı
+  - SGK işçi payı       : %14
+  - SGK işveren payı    : %20.5
+  - İşsizlik (işçi)     : %1
+  - İşsizlik (işveren)  : %2
+  - SGK tavanı          : 2026 değeri araştırılacak (her yıl değişir)
+  - Gelir vergisi        : Kümülatif, dilimli (2026 dilimleri araştırılacak)
+  - Damga vergisi        : Binde 7.59 (güncel oran kontrol edilecek)
+  - Asgari ücret istisnası uygulaması
+  - Aylık bordro slip (PDF üretimi)
+  - TimeClock entegrasyonu (fazla mesai hesabı)
+  - Toplu bordro çalıştırma (şube/şirket bazında)
+
+Ön şartlar (HAZIR):
+  employees tablosunda tc_no, sgk_no, base_salary, bank_iban alanları var.
+
+Araştırılacaklar:
+  2026 SGK tavan tutarı, güncel gelir vergisi dilimleri, damga vergisi oranı.
+
+================================================================
+9. BEKLEYEN DİĞER İŞLER (payroll'dan sonra)
+================================================================
+
+- Frontend TAM Türkçe: Şu an arayüz karışık dilli (MVP'de İngilizce
+  tutuldu). Lokalizasyon rekabet avantajı için TAM Türkçe olmalı,
+  İngilizce değil. Bu iş payroll'dan sonra yapılacak.
+
+- Admin UI — Employee Portal onay kuyruğu:
+    İzin (leave) talepleri          → onay/red
+    Duyuru (announcement) yönetimi  → oluştur/yayınla
+    Doküman (document) yönetimi     → yükle/ata
+    Vardiya değişim (shift_swap)    → onay/red
+  Backend altyapısı hazır, sadece frontend ve admin endpoint'leri yok.
+
+- Vardiya takvimi gerçek veriyle (şu an statik/demo).
+
+- Dosya upload (object storage — S3 uyumlu veya Minio).
+
+- Employment Period modeli (kıdem tazminatı hesabı için işe giriş/çıkış
+  dönemleri tutulacak).
+
+- Manager LogBook modülü.
+
+- Business Intelligence / Dashboard istatistikleri (canlı verilerle).
+
+================================================================
+10. MODÜL DİZİN YAPISI
+================================================================
+
+backend/app/modules/
+├── auth/
+│   ├── models.py         ← User modeli (SADECE auth)
+│   ├── schemas.py
+│   ├── service.py
+│   └── router.py
+│   (NOT: __init__.py YOK)
+├── company/
+│   ├── models.py         ← Company + Branch
+│   ├── schemas.py
+│   ├── service.py
+│   └── router.py
+├── employees/
+│   ├── __init__.py       ← VAR
+│   ├── models.py         ← Employee modeli (HR profili)
+│   ├── schemas.py
+│   ├── service.py
+│   └── router.py
+├── inventory/
+├── timeclock/
+├── users/
+├── workforce/
+└── employee_portal/
+    ├── __init__.py
+    ├── leaves/
+    │   ├── __init__.py / models.py / schemas.py / service.py / router.py
+    ├── announcements/
+    │   ├── __init__.py / models.py / schemas.py / service.py / router.py
+    ├── documents/
+    │   ├── __init__.py / models.py / schemas.py / service.py / router.py
+    └── shift_swaps/
+        ├── __init__.py / models.py / schemas.py / service.py / router.py
+
+================================================================
+11. FRONTEND SAYFALARI
+================================================================
+
+Rota yapısı:
+  /app → Login → MainApp
+  Dashboard   → 6 modül kartı (live / coming soon)
+  Companies   → 3 kolon: Companies | Branches | Employees
+  Workforce   → Branch seç → Shift listesi (draft/publish/cancel/delete)
+  Inventory   → Branch → Products → Product detail + Movement history
+  Time Clock  → Branch → Employee dropdown → Check-in/out
+
+Önemli frontend notları:
+  - Employees listesi TimeClock'ta employees endpoint'inden gelir
+    GET /api/v1/employees/branch/{id}
+  - TimeClock check-in'de employee_id = employees.id (users.id DEĞİL!)
+  - Companies sayfası employee formu alanları:
+      first_name, last_name, email, phone, position, department,
+      contract_type, hire_date, base_salary,
+      create_user_account (checkbox), password, role
+
+================================================================
+12. BUNU OKUYACAK CLAUDE'A NOT
+================================================================
+
+Bu dosyayı İbrahim Albayrak paylaştı. WHITE.AI projesinin devamını
+yapıyorsun.
+
+  Proje dizini  : ~/whiteai/
+  Admin         : admin@whiteai.com / test1234
+  Sıradaki görev: HR & Payroll modülü (bölüm 8)
+
+Yapma:
+  - Mimariyi bozma (User ≠ Employee ayrımı korunacak)
+  - Hard-delete kullanma, suspend kullan
+  - python komutu yok, python3 kullan
+  - create_all yok, Alembic kullan
+  - company ve employees'te aynı isimli router.py var, klasörü çift kontrol et
+
+Yap:
+  - employees tablosunu temel al (tc_no, sgk_no, base_salary, bank_iban hazır)
+  - Yeni migration için rutini izle (bölüm 4)
+  - SGK/vergi değerlerini her yıl değiştiği için güncel araştır
+
+================================================================
