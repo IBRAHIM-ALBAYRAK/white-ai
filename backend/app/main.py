@@ -38,7 +38,7 @@ from app.modules.employee_portal.announcements.router import router as announcem
 from app.modules.employee_portal.documents.router import router as documents_router
 from app.modules.employee_portal.shift_swaps.router import router as shift_swaps_router
 
-
+   
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # NOTE: Schema is now managed by Alembic migrations, NOT create_all.
