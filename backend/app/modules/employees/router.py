@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_role
+from app.core.deps import get_current_user, require_role, assert_branch_access
 from app.modules.auth.models import User, UserRole
 from app.modules.employees.schemas import (
     EmployeeCreateSchema, EmployeeUpdateSchema, EmployeeResponseSchema,
@@ -56,6 +56,7 @@ async def list_employees_by_branch(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await employee_service.get_employees_by_branch(db, branch_id)
 
 
@@ -65,6 +66,7 @@ async def list_inactive_employees_by_branch(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await employee_service.get_inactive_by_branch(db, branch_id)
 
 

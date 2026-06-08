@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.modules.auth.models import User, UserRole
 from app.modules.employees.models import Employee
-from app.modules.company.models import Company, OversightLink
+from app.modules.company.models import Company, OversightLink, Branch
 
 security = HTTPBearer()
 
@@ -123,3 +123,25 @@ async def get_oversight_link_type(db: AsyncSession, brand_company_id: str, sub_c
             OversightLink.sub_company_id == sub_company_id,
         )
     )).scalar_one_or_none()
+
+async def assert_branch_access(db: AsyncSession, current_user: User, branch_id: str) -> None:
+    """
+    Bir branch'e erişim guard'ı. Branch'in company'sini bulur ve kullanıcının
+    erişebileceği company'ler arasında mı diye kontrol eder. Değilse 403.
+    Superadmin her zaman geçer (accessible = None).
+    """
+    accessible = await get_accessible_company_ids(db, current_user)
+    if accessible is None:
+        return  # superadmin
+
+    branch = (await db.execute(
+        select(Branch).where(Branch.id == branch_id)
+    )).scalar_one_or_none()
+    if branch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found.")
+
+    if branch.company_id not in accessible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this branch.",
+        )
