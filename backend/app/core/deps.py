@@ -167,3 +167,18 @@ async def assert_employee_company_access(db: AsyncSession, current_user: User, e
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this employee.",
         )
+
+
+async def assert_company_access(db: AsyncSession, current_user: User, company_id: str) -> None:
+    """
+    Bir company'ye doğrudan erişim guard'ı. Kullanıcının erişebileceği
+    company'ler arasında mı kontrol eder. Değilse 403. Superadmin her zaman geçer.
+    """
+    accessible = await get_accessible_company_ids(db, current_user)
+    if accessible is None:
+        return  # superadmin
+    if company_id not in accessible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this company.",
+        )

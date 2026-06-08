@@ -5,14 +5,8 @@ app/modules/employee_portal/announcements/router.py
 ANNOUNCEMENTS — API Router (HTTP Layer)
 ================================================================================
 
-WHAT THIS FILE DOES:
-    Exposes the announcements endpoints over HTTP. Thin layer: authenticates,
-    parses input, delegates to announcement_service. The author (created_by) is
-    taken from the auth token, never from the request body.
-
-WHERE IT LIVES:
-    app/modules/employee_portal/announcements/router.py
-    Registered in app/main.py under the /api/v1 prefix.
+Thin HTTP layer over announcement_service. The author (created_by) comes from
+the auth token, never the request body.
 
 ENDPOINTS:
     POST   /api/v1/announcements                 → manager posts an announcement
@@ -21,18 +15,22 @@ ENDPOINTS:
     GET    /api/v1/announcements/{id}             → single announcement
     PUT    /api/v1/announcements/{id}             → edit / hide
 
-AUTH:
-    All endpoints require a valid Bearer token. On create, the manager's user id
-    (token "sub") is stamped as created_by.
+TENANT ISOLATION:
+    - company-scoped endpoints (create / list-by-company): assert_company_access
+    - single-announcement endpoints (get / update): _assert_announcement resolves
+      the announcement's company and checks access
+    - feed: assert_employee_access (own-profile for plain employees) PLUS
+      assert_employee_company_access for admins (tenant scope)
 ================================================================================
 """
-
-
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_role, assert_employee_access
+from app.core.deps import (
+    get_current_user, require_role,
+    assert_employee_access, assert_company_access, assert_employee_company_access,
+)
 from app.modules.auth.models import User, UserRole
 from app.modules.employee_portal.announcements.schemas import (
     AnnouncementCreateSchema,
@@ -44,6 +42,13 @@ from app.modules.employee_portal.announcements.service import announcement_servi
 router = APIRouter(prefix="/announcements", tags=["Announcements"])
 
 staff = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
+ADMIN_ROLES = (UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
+
+
+async def _assert_announcement(db: AsyncSession, current_user: User, announcement_id: str) -> None:
+    """Resolve an announcement's company and assert the caller can access it."""
+    ann = await announcement_service.get_announcement(db, announcement_id)
+    await assert_company_access(db, current_user, ann.company_id)
 
 
 @router.post("", response_model=AnnouncementResponseSchema)
@@ -52,6 +57,7 @@ async def create_announcement(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await assert_company_access(db, current_user, data.company_id)
     return await announcement_service.create_announcement(
         db, creator_id=current_user.id, data=data
     )
@@ -63,6 +69,7 @@ async def list_by_company(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await assert_company_access(db, current_user, company_id)
     return await announcement_service.get_by_company(db, company_id)
 
 
@@ -73,6 +80,8 @@ async def get_feed(
     current_user: User = Depends(get_current_user),
 ):
     await assert_employee_access(db, current_user, employee_id)
+    if current_user.role in ADMIN_ROLES:
+        await assert_employee_company_access(db, current_user, employee_id)
     return await announcement_service.get_feed_for_employee(db, employee_id)
 
 
@@ -82,6 +91,7 @@ async def get_announcement(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await _assert_announcement(db, current_user, announcement_id)
     return await announcement_service.get_announcement(db, announcement_id)
 
 
@@ -92,4 +102,5 @@ async def update_announcement(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await _assert_announcement(db, current_user, announcement_id)
     return await announcement_service.update_announcement(db, announcement_id, data)
