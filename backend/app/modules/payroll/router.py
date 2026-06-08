@@ -57,7 +57,7 @@ async def get_year(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Admins may read payslips ONLY within companies they can access.
+    # Admins may read payslips ONLY within companies they can access. 
     # A plain employee may read ONLY their own payslips.
     if current_user.role in ADMIN_ROLES:
         await assert_payroll_access(db, current_user, employee_id)
