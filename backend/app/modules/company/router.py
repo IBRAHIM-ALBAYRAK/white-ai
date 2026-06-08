@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import require_role
+from app.core.deps import require_role, get_accessible_company_ids
 from app.modules.auth.models import User, UserRole
 from app.modules.company.schemas import (
     CompanyCreateSchema, CompanyUpdateSchema, CompanyResponseSchema,
@@ -48,7 +48,8 @@ async def list_companies(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
-    return await company_service.get_companies(db)
+    allowed = await get_accessible_company_ids(db, current_user)
+    return await company_service.get_companies(db, allowed)
 
 # IMPORTANT: static-prefix route must come BEFORE /{company_id}
 @router.get("/companies/suspended", response_model=list[CompanyResponseSchema])

@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.modules.auth.models import User, UserRole
 from app.modules.employees.models import Employee
+from app.modules.company.models import Company, OversightLink
 
 security = HTTPBearer()
 
@@ -70,3 +71,55 @@ async def assert_employee_access(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only access your own data.",
         )
+
+async def get_accessible_company_ids(db: AsyncSession, current_user: User) -> list[str] | None:
+    """
+    Bu kullanıcının VERİSİNİ GÖREBİLECEĞİ company id'lerini döndürür.
+
+    Dönüş:
+      - None  -> kısıtlama yok (superadmin her şeyi görür). Çağıran taraf filtre uygulamaz.
+      - list  -> sadece bu id'lere ait veriye erişilebilir.
+
+    Kurallar:
+      - SUPERADMIN: None (tüm sistem).
+      - OWNER/MANAGER/EMPLOYEE: kendi company_id'si. Ek olarak, kendi company'si
+        "brand" ise, oversight_links üzerinden bağlı tüm alt company'ler de eklenir
+        (marka sahibi franchise/şubelerini görür).
+    """
+    if current_user.role == UserRole.SUPERADMIN:
+        return None
+
+    own = current_user.company_id
+    if own is None:
+        return []  # company'ye bağlı değilse hiçbir şey göremez
+
+    ids = {own}
+
+    # Kendi company'si "brand" mı? Öyleyse denetlediği alt company'leri ekle.
+    company = (await db.execute(
+        select(Company).where(Company.id == own)
+    )).scalar_one_or_none()
+
+    if company is not None and company.company_type == "brand":
+        sub_rows = (await db.execute(
+            select(OversightLink.sub_company_id).where(
+                OversightLink.brand_company_id == own
+            )
+        )).scalars().all()
+        ids.update(sub_rows)
+
+    return list(ids)
+
+
+async def get_oversight_link_type(db: AsyncSession, brand_company_id: str, sub_company_id: str) -> str | None:
+    """
+    Marka ile alt company arasındaki bağın tipini döndürür: "full", "franchise" veya None.
+    Yetki ince ayarı için kullanılır (örn. brand, franchise'ın bordrosunu göremez ama
+    "full" bağlı kendi şubesinin bordrosunu görür).
+    """
+    return (await db.execute(
+        select(OversightLink.link_type).where(
+            OversightLink.brand_company_id == brand_company_id,
+            OversightLink.sub_company_id == sub_company_id,
+        )
+    )).scalar_one_or_none()
