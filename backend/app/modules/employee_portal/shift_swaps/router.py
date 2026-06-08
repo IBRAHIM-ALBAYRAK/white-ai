@@ -5,14 +5,8 @@ app/modules/employee_portal/shift_swaps/router.py
 SHIFT SWAP — API Router (HTTP Layer)
 ================================================================================
 
-WHAT THIS FILE DOES:
-    Exposes the shift swap endpoints over HTTP. Thin layer: authenticates, parses
-    input, delegates to shift_swap_service. The two-stage approval flow is driven
-    by three action endpoints (respond, decide) plus create/cancel.
-
-WHERE IT LIVES:
-    app/modules/employee_portal/shift_swaps/router.py
-    Registered in app/main.py under the /api/v1 prefix.
+Thin HTTP layer over shift_swap_service. Two-stage approval: respond (coworker)
+then decide (manager), plus create/cancel.
 
 ENDPOINTS:
     POST   /api/v1/shift-swaps                     → requester opens a swap
@@ -24,20 +18,24 @@ ENDPOINTS:
     PUT    /api/v1/shift-swaps/{id}/decide          → manager approves/rejects (stage 2)
     PUT    /api/v1/shift-swaps/{id}/cancel          → requester withdraws
 
-AUTH:
-    All endpoints require a valid Bearer token. On manager decide, the manager's
-    user id (token "sub") is stamped as manager_id. Ownership checks (target on
-    respond, requester on cancel) are enforced in the service via IDs in the body.
+TENANT ISOLATION:
+    - branch reads: assert_branch_access
+    - single-swap (get / decide): _assert_swap resolves the swap's company
+    - employee-facing (create / list-by-employee / respond / cancel):
+      assert_employee_access keeps a plain employee to their own profile; for
+      admins we additionally apply assert_employee_company_access (tenant scope).
 ================================================================================
 """
-
-
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_role, assert_employee_access
+from app.core.deps import (
+    get_current_user, require_role,
+    assert_employee_access, assert_branch_access,
+    assert_company_access, assert_employee_company_access,
+)
 from app.modules.auth.models import User, UserRole
 from app.modules.employee_portal.shift_swaps.schemas import (
     SwapCreateSchema,
@@ -50,11 +48,18 @@ from app.modules.employee_portal.shift_swaps.service import shift_swap_service
 router = APIRouter(prefix="/shift-swaps", tags=["Shift Swaps"])
 
 staff = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
+ADMIN_ROLES = (UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 
 
 class CancelSwapSchema(BaseModel):
     """Body for cancel — the requester_id of the owner withdrawing the swap."""
     requester_id: str
+
+
+async def _assert_swap(db: AsyncSession, current_user: User, swap_id: str) -> None:
+    """Resolve a swap's company and assert the caller can access it."""
+    swap = await shift_swap_service.get_swap(db, swap_id)
+    await assert_company_access(db, current_user, swap.company_id)
 
 
 @router.post("", response_model=SwapResponseSchema)
@@ -64,6 +69,8 @@ async def create_swap(
     current_user: User = Depends(get_current_user),
 ):
     await assert_employee_access(db, current_user, data.requester_id)
+    if current_user.role in ADMIN_ROLES:
+        await assert_employee_company_access(db, current_user, data.requester_id)
     return await shift_swap_service.create_swap(db, data)
 
 
@@ -74,6 +81,8 @@ async def list_by_employee(
     current_user: User = Depends(get_current_user),
 ):
     await assert_employee_access(db, current_user, employee_id)
+    if current_user.role in ADMIN_ROLES:
+        await assert_employee_company_access(db, current_user, employee_id)
     return await shift_swap_service.get_by_employee(db, employee_id)
 
 
@@ -83,6 +92,7 @@ async def list_by_branch(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await shift_swap_service.get_by_branch(db, branch_id)
 
 
@@ -92,6 +102,7 @@ async def list_pending_approval(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await shift_swap_service.get_pending_manager_approval(db, branch_id)
 
 
@@ -101,6 +112,7 @@ async def get_swap(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await _assert_swap(db, current_user, swap_id)
     return await shift_swap_service.get_swap(db, swap_id)
 
 
@@ -112,6 +124,8 @@ async def respond_swap(
     current_user: User = Depends(get_current_user),
 ):
     await assert_employee_access(db, current_user, data.target_id)
+    if current_user.role in ADMIN_ROLES:
+        await assert_employee_company_access(db, current_user, data.target_id)
     return await shift_swap_service.respond_swap(db, swap_id, data)
 
 
@@ -122,6 +136,7 @@ async def decide_swap(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
+    await _assert_swap(db, current_user, swap_id)
     return await shift_swap_service.decide_swap(
         db, swap_id=swap_id, manager_id=current_user.id, data=data
     )
@@ -135,6 +150,8 @@ async def cancel_swap(
     current_user: User = Depends(get_current_user),
 ):
     await assert_employee_access(db, current_user, data.requester_id)
+    if current_user.role in ADMIN_ROLES:
+        await assert_employee_company_access(db, current_user, data.requester_id)
     return await shift_swap_service.cancel_swap(
         db, swap_id=swap_id, requester_id=data.requester_id
     )
