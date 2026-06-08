@@ -145,3 +145,25 @@ async def assert_branch_access(db: AsyncSession, current_user: User, branch_id: 
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this branch.",
         )
+
+async def assert_employee_company_access(db: AsyncSession, current_user: User, employee_id: str) -> None:
+    """
+    Bir çalışana (tekil) erişim guard'ı. Çalışanın company'sini bulur ve
+    kullanıcının erişebileceği company'ler arasında mı kontrol eder. Değilse 403.
+    Superadmin her zaman geçer.
+    """
+    accessible = await get_accessible_company_ids(db, current_user)
+    if accessible is None:
+        return  # superadmin
+
+    emp = (await db.execute(
+        select(Employee).where(Employee.id == employee_id)
+    )).scalar_one_or_none()
+    if emp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found.")
+
+    if emp.company_id not in accessible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this employee.",
+        )

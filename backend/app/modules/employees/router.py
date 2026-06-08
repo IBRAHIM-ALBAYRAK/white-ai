@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_role, assert_branch_access
+from app.core.deps import get_current_user, require_role, assert_branch_access, assert_employee_company_access
 from app.modules.auth.models import User, UserRole
 from app.modules.employees.schemas import (
     EmployeeCreateSchema, EmployeeUpdateSchema, EmployeeResponseSchema,
@@ -93,6 +93,7 @@ async def get_employee(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
+    await assert_employee_company_access(db, current_user, employee_id)
     return await employee_service.get_employee(db, employee_id)
 
 
@@ -103,6 +104,7 @@ async def update_employee(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_write),
 ):
+    await assert_employee_company_access(db, current_user, employee_id)
     return await employee_service.update_employee(db, employee_id, data)
 
 
@@ -116,6 +118,7 @@ async def terminate_employee(
     current_user: User = Depends(admin_write),
 ):
     """Terminate an employee (soft). Requires the acting admin's password."""
+    await assert_employee_company_access(db, current_user, employee_id)
     await employee_service.terminate_employee(
         db,
         employee_id=employee_id,
@@ -132,4 +135,5 @@ async def reactivate_employee(
     current_user: User = Depends(admin_write),
 ):
     """Reactivate (rehire) a terminated employee."""
+    await assert_employee_company_access(db, current_user, employee_id)
     return await employee_service.reactivate_employee(db, employee_id)
