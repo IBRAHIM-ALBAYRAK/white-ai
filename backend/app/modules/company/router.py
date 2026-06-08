@@ -6,15 +6,26 @@ Role-based access:
   - Writes (create/update/suspend/reactivate/delete): superadmin, owner
   - Reads  (list/get): superadmin, owner, manager
   - Employees have NO access to company/branch management.
-NOTE: tenant isolation (owner sees ONLY their own company) is a SEPARATE,
-deeper fix — right now an owner/manager can still see all companies. See #5b.
+
+Tenant isolation:
+  - list_companies / list_suspended_companies: filtered via get_accessible_company_ids.
+  - company-scoped endpoints (get/update/suspend/reactivate/delete, and the
+    company's branch list/create): assert_company_access(company_id).
+  - branch-scoped endpoints (get/update/suspend/reactivate/delete a branch):
+    assert_branch_access(branch_id).
+  - create_company is NOT tenant-checked here: it creates a brand-new company.
+    (Who may create top-level companies and how brand→sub linking works is part
+    of the oversight layer, handled separately.)
 """
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import require_role, get_accessible_company_ids
+from app.core.deps import (
+    require_role, get_accessible_company_ids,
+    assert_company_access, assert_branch_access,
+)
 from app.modules.auth.models import User, UserRole
 from app.modules.company.schemas import (
     CompanyCreateSchema, CompanyUpdateSchema, CompanyResponseSchema,
@@ -57,8 +68,9 @@ async def list_suspended_companies(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
-    """List suspended companies (candidates for reactivation)."""
-    return await company_service.get_suspended_companies(db)
+    """List suspended companies (candidates for reactivation), tenant-scoped."""
+    allowed = await get_accessible_company_ids(db, current_user)
+    return await company_service.get_suspended_companies(db, allowed)
 
 @router.get("/companies/{company_id}", response_model=CompanyResponseSchema)
 async def get_company(
@@ -66,6 +78,7 @@ async def get_company(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
+    await assert_company_access(db, current_user, company_id)
     return await company_service.get_company(db, company_id)
 
 @router.put("/companies/{company_id}", response_model=CompanyResponseSchema)
@@ -75,6 +88,7 @@ async def update_company(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_write),
 ):
+    await assert_company_access(db, current_user, company_id)
     return await company_service.update_company(db, company_id, data)
 
 @router.put("/companies/{company_id}/suspend", response_model=CompanyResponseSchema)
@@ -85,6 +99,7 @@ async def suspend_company(
     current_user: User = Depends(admin_write),
 ):
     """Suspend a company and disable login for its active employees."""
+    await assert_company_access(db, current_user, company_id)
     return await company_service.suspend_company(
         db, company_id=company_id, admin_id=current_user.id, admin_password=data.admin_password
     )
@@ -97,6 +112,7 @@ async def reactivate_company(
     current_user: User = Depends(admin_write),
 ):
     """Reactivate a suspended company and restore login for its active employees."""
+    await assert_company_access(db, current_user, company_id)
     return await company_service.reactivate_company(
         db, company_id=company_id, admin_id=current_user.id, admin_password=data.admin_password
     )
@@ -109,6 +125,7 @@ async def delete_company(
     current_user: User = Depends(admin_write),
 ):
     """Hard-delete an empty company (no branches, no employees)."""
+    await assert_company_access(db, current_user, company_id)
     await company_service.delete_company(
         db, company_id=company_id, admin_id=current_user.id, admin_password=data.admin_password
     )
@@ -123,6 +140,7 @@ async def create_branch(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_write),
 ):
+    await assert_company_access(db, current_user, company_id)
     data.company_id = company_id
     return await company_service.create_branch(db, data)
 
@@ -132,6 +150,7 @@ async def list_branches(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
+    await assert_company_access(db, current_user, company_id)
     return await company_service.get_branches(db, company_id)
 
 # IMPORTANT: static-prefix route must come BEFORE /{branch_id}
@@ -142,6 +161,7 @@ async def list_suspended_branches(
     current_user: User = Depends(admin_read),
 ):
     """List suspended branches of a company (candidates for reactivation)."""
+    await assert_company_access(db, current_user, company_id)
     return await company_service.get_suspended_branches(db, company_id)
 
 @router.get("/branches/{branch_id}", response_model=BranchResponseSchema)
@@ -150,6 +170,7 @@ async def get_branch(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_read),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await company_service.get_branch(db, branch_id)
 
 @router.put("/branches/{branch_id}", response_model=BranchResponseSchema)
@@ -159,6 +180,7 @@ async def update_branch(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_write),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await company_service.update_branch(db, branch_id, data)
 
 @router.put("/branches/{branch_id}/suspend", response_model=BranchResponseSchema)
@@ -169,6 +191,7 @@ async def suspend_branch(
     current_user: User = Depends(admin_write),
 ):
     """Suspend a branch and disable login for its active employees."""
+    await assert_branch_access(db, current_user, branch_id)
     return await company_service.suspend_branch(
         db, branch_id=branch_id, admin_id=current_user.id, admin_password=data.admin_password
     )
@@ -181,6 +204,7 @@ async def reactivate_branch(
     current_user: User = Depends(admin_write),
 ):
     """Reactivate a suspended branch and restore login for its active employees."""
+    await assert_branch_access(db, current_user, branch_id)
     return await company_service.reactivate_branch(
         db, branch_id=branch_id, admin_id=current_user.id, admin_password=data.admin_password
     )
@@ -193,6 +217,7 @@ async def delete_branch(
     current_user: User = Depends(admin_write),
 ):
     """Hard-delete an empty branch (no employees)."""
+    await assert_branch_access(db, current_user, branch_id)
     await company_service.delete_branch(
         db, branch_id=branch_id, admin_id=current_user.id, admin_password=data.admin_password
     )

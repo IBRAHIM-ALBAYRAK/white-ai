@@ -65,10 +65,13 @@ class CompanyService:
         result = await db.execute(query)
         return result.scalars().all()
 
-    async def get_suspended_companies(self, db: AsyncSession) -> list[Company]:
-        """Return all suspended (inactive) companies — used by the admin UI to
-        list and reactivate them."""
-        result = await db.execute(select(Company).where(Company.is_active == False))
+    async def get_suspended_companies(self, db: AsyncSession, allowed_ids: list[str] | None = None) -> list[Company]:
+        """Return suspended (inactive) companies. If allowed_ids is None, return all
+        (superadmin); otherwise restrict to those company ids (tenant isolation)."""
+        query = select(Company).where(Company.is_active == False)
+        if allowed_ids is not None:
+            query = query.where(Company.id.in_(allowed_ids))
+        result = await db.execute(query)
         return result.scalars().all()
 
     async def get_company(self, db: AsyncSession, company_id: str) -> Company:
