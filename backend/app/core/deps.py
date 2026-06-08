@@ -182,3 +182,41 @@ async def assert_company_access(db: AsyncSession, current_user: User, company_id
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this company.",
         )
+
+async def assert_payroll_access(db: AsyncSession, current_user: User, employee_id: str) -> None:
+    """
+    Bordro erişim guard'ı. Önce normal tenant erişimini uygular
+    (assert_employee_company_access). Ardından oversight inceliği:
+      - Çalışanın company'si kullanıcının KENDİ company'si ise  -> izin.
+      - Oversight üzerinden erişiliyorsa (brand -> sub) bağ tipine bakılır:
+          * "full"      -> izin (kendi şubesi; bordro görünür)
+          * "franchise" -> RED (ayrı tüzel kişilik; bordro gizli)
+    Superadmin her zaman geçer.
+    """
+    # 1) Temel tenant erişimi (yoksa burada 403/404 atar)
+    await assert_employee_company_access(db, current_user, employee_id)
+
+    if current_user.role == UserRole.SUPERADMIN:
+        return
+    if current_user.company_id is None:
+        return  # assert_employee_company_access zaten elemiştir
+
+    # Çalışanın company'sini bul
+    emp = (await db.execute(
+        select(Employee).where(Employee.id == employee_id)
+    )).scalar_one_or_none()
+    if emp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found.")
+
+    # Kendi doğrudan company'si ise bordro serbest
+    if emp.company_id == current_user.company_id:
+        return
+
+    # Oversight üzerinden erişim: bağ tipine bak
+    link_type = await get_oversight_link_type(db, current_user.company_id, emp.company_id)
+    if link_type == "franchise":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bordro bilgisi franchise için gizlidir.",
+        )
+    # link_type "full" veya None (None olmamalı çünkü erişim zaten doğrulandı) -> izin

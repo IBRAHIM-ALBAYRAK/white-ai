@@ -18,7 +18,7 @@ Tenant scoping (manager limited to own branch) is a later concern (#5b).
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import require_role, get_current_user, assert_employee_company_access
+from app.core.deps import require_role, get_current_user, assert_employee_company_access, assert_payroll_access
 from app.modules.auth.models import User, UserRole
 from app.modules.payroll.schemas import RunMonthSchema, PayslipResponseSchema
 from app.modules.payroll.service import payroll_service
@@ -36,7 +36,7 @@ async def run_month(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
-    await assert_employee_company_access(db, current_user, data.employee_id)
+    await assert_payroll_access(db, current_user, data.employee_id)
     return await payroll_service.run_month(db, data.employee_id, data.year, data.month)
 
 
@@ -46,7 +46,7 @@ async def run_through(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
-    await assert_employee_company_access(db, current_user, data.employee_id)
+    await assert_payroll_access(db, current_user, data.employee_id)
     return await payroll_service.run_through(db, data.employee_id, data.year, data.month)
 
 
@@ -60,7 +60,7 @@ async def get_year(
     # Admins may read payslips ONLY within companies they can access.
     # A plain employee may read ONLY their own payslips.
     if current_user.role in ADMIN_ROLES:
-        await assert_employee_company_access(db, current_user, employee_id)
+        await assert_payroll_access(db, current_user, employee_id)
     else:
         own = await employee_service.get_by_user_id(db, current_user.id)
         if own.id != employee_id:
