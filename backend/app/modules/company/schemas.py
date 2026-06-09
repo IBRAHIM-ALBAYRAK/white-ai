@@ -41,9 +41,9 @@ class CompanyResponseSchema(BaseModel):
     email: str
     phone: Optional[str]
     address: Optional[str]
+    company_type: str
     is_active: bool
     created_at: datetime
-
     model_config = {"from_attributes": True}
 
 # --- Branch Schemas ---
