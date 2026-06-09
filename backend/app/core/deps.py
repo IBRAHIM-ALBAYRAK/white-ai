@@ -310,3 +310,42 @@ async def assert_employee_write_access(db: AsyncSession, current_user: User, emp
             detail="Franchise çalışanına doğrudan müdahale edemezsiniz. Yalnızca görüntüleyebilir, öneri iletebilirsiniz.",
         )
     # "full" -> izin
+
+
+async def assert_shift_write_access(db: AsyncSession, current_user: User, branch_id: str) -> None:
+    """
+    Vardiya YAZMA guard'ı (oluştur/güncelle/sil/ata). Önce branch erişimini uygular,
+    ardından oversight inceliği:
+      - Branch'in company'si kullanıcının KENDİ company'si ise -> izin (franchise
+        kendi vardiyasını serbestçe yönetir).
+      - Oversight üzerinden erişiliyorsa (brand -> sub) bağ tipine bakılır:
+          * "full"      -> izin (kendi şubesi).
+          * "franchise" -> RED. Marka, franchise vardiyasına doğrudan müdahale
+            edemez (öneri-only). Sadece görebilir.
+    Superadmin her zaman geçer.
+    """
+    await assert_branch_access(db, current_user, branch_id)
+
+    if current_user.role == UserRole.SUPERADMIN:
+        return
+    if current_user.company_id is None:
+        return
+
+    branch = (await db.execute(
+        select(Branch).where(Branch.id == branch_id)
+    )).scalar_one_or_none()
+    if branch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found.")
+
+    # Kendi company'si ise vardiya yazma serbest
+    if branch.company_id == current_user.company_id:
+        return
+
+    # Oversight üzerinden: franchise ise yazma yasak
+    link_type = await get_oversight_link_type(db, current_user.company_id, branch.company_id)
+    if link_type == "franchise":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Franchise vardiyasına doğrudan müdahale edemezsiniz. Yalnızca görüntüleyebilirsiniz.",
+        )
+    # "full" -> izin
