@@ -12,7 +12,7 @@ Tables:
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Enum as SAEnum
+from sqlalchemy import Column, String, Float, Boolean, DateTime, ForeignKey, Enum as SAEnum, JSON
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 import enum
@@ -87,3 +87,37 @@ class StockMovement(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     product = relationship("Product", back_populates="movements")
+
+
+class ChangeAction(str, enum.Enum):
+    CREATE = "create"   # Yeni ürün ekleme talebi
+    UPDATE = "update"   # Mevcut ürün güncelleme talebi
+    DELETE = "delete"   # Ürün silme talebi
+
+
+class ChangeStatus(str, enum.Enum):
+    PENDING  = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class InventoryChangeRequest(Base):
+    """
+    Franchise sub-owner'ın yapısal envanter değişikliği (ürün ekle/güncelle/sil)
+    talebi. Brand-owner onaylar/reddeder. Onaylanınca sistem değişikliği otomatik
+    uygular. Günlük stok hareketleri bu akıştan GEÇMEZ (onlar serbest).
+    """
+    __tablename__ = "inventory_change_requests"
+
+    id                = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    company_id        = Column(String, ForeignKey("companies.id"), nullable=False)   # Talebi açan franchise
+    branch_id         = Column(String, ForeignKey("branches.id"), nullable=False)    # Hangi şube
+    requested_by      = Column(String, ForeignKey("users.id"), nullable=False)       # Talep eden franchise user
+    action            = Column(SAEnum(ChangeAction), nullable=False)
+    target_product_id = Column(String, ForeignKey("inventory_products.id"), nullable=True)  # update/delete için
+    payload           = Column(JSON, nullable=True)   # create: yeni ürün bilgisi; update: değişen alanlar
+    status            = Column(SAEnum(ChangeStatus), nullable=False, default=ChangeStatus.PENDING)
+    reviewed_by       = Column(String, ForeignKey("users.id"), nullable=True)        # Onaylayan/reddeden brand user
+    review_note       = Column(String, nullable=True)
+    created_at        = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    reviewed_at       = Column(DateTime(timezone=True), nullable=True)
