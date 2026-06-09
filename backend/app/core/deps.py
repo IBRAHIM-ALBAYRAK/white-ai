@@ -220,3 +220,55 @@ async def assert_payroll_access(db: AsyncSession, current_user: User, employee_i
             detail="Bordro bilgisi franchise için gizlidir.",
         )
     # link_type "full" veya None (None olmamalı çünkü erişim zaten doğrulandı) -> izin
+
+async def is_franchise_company(db: AsyncSession, company_id: str) -> bool:
+    """
+    Bu company herhangi bir markanın 'franchise' bağıyla denetlediği bir alt
+    şirket mi? (oversight_links'te sub_company_id=company ve link_type='franchise')
+    """
+    row = (await db.execute(
+        select(OversightLink.id).where(
+            OversightLink.sub_company_id == company_id,
+            OversightLink.link_type == "franchise",
+        )
+    )).scalar_one_or_none()
+    return row is not None
+
+
+async def assert_structural_inventory_access(db: AsyncSession, current_user: User, branch_id: str) -> None:
+    """
+    Yapısal envanter değişikliği (ürün ekle/güncelle/sil, kategori/tedarikçi ekle)
+    için erişim guard'ı. Önce normal branch erişimini uygular, ardından franchise
+    kuralı:
+      - Franchise sahibi KENDİ company'sinde yapısal değişiklik YAPAMAZ (403);
+        change-request akışını kullanmalı.
+      - Brand (oversight üzerinden erişen), standalone şirket, ve full-şube serbest.
+    Superadmin her zaman geçer.
+    """
+    # 1) Temel branch erişimi (yoksa 403/404)
+    await assert_branch_access(db, current_user, branch_id)
+
+    if current_user.role == UserRole.SUPERADMIN:
+        return
+    if current_user.company_id is None:
+        return  # assert_branch_access zaten elemiştir
+
+    # Branch'in company'sini bul
+    branch = (await db.execute(
+        select(Branch).where(Branch.id == branch_id)
+    )).scalar_one_or_none()
+    if branch is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Branch not found.")
+
+    # Kullanıcı bu branch'in company'sinin SAHİBİ değilse -> oversight'tan erişen
+    # brand'dir; brand franchise envanterini yönetebilir -> serbest.
+    if branch.company_id != current_user.company_id:
+        return
+
+    # Kullanıcı kendi company'sinde işlem yapıyor. Bu company bir franchise mı?
+    if await is_franchise_company(db, branch.company_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Franchise olarak yapısal envanter değişikliği yapamazsınız. Lütfen markanıza değişiklik talebi gönderin.",
+        )
+    # standalone veya full-şube -> serbest
