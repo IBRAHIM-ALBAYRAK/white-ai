@@ -272,3 +272,41 @@ async def assert_structural_inventory_access(db: AsyncSession, current_user: Use
             detail="Franchise olarak yapısal envanter değişikliği yapamazsınız. Lütfen markanıza değişiklik talebi gönderin.",
         )
     # standalone veya full-şube -> serbest
+
+
+async def assert_employee_write_access(db: AsyncSession, current_user: User, employee_id: str) -> None:
+    """
+    Çalışan YAZMA erişim guard'ı (update/terminate/reactivate). Önce normal tenant
+    erişimini uygular, ardından oversight inceliği:
+      - Çalışanın company'si kullanıcının KENDİ company'si ise -> izin.
+      - Oversight üzerinden erişiliyorsa (brand -> sub) bağ tipine bakılır:
+          * "full"      -> izin (kendi şubesi).
+          * "franchise" -> RED. Marka, franchise çalışanına DOĞRUDAN müdahale
+            edemez (hukuki: asıl işveren sayılmamak için). Sadece görebilir.
+    Superadmin her zaman geçer.
+    """
+    await assert_employee_company_access(db, current_user, employee_id)
+
+    if current_user.role == UserRole.SUPERADMIN:
+        return
+    if current_user.company_id is None:
+        return
+
+    emp = (await db.execute(
+        select(Employee).where(Employee.id == employee_id)
+    )).scalar_one_or_none()
+    if emp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found.")
+
+    # Kendi doğrudan company'si ise yazma serbest
+    if emp.company_id == current_user.company_id:
+        return
+
+    # Oversight üzerinden erişim: franchise ise yazma yasak
+    link_type = await get_oversight_link_type(db, current_user.company_id, emp.company_id)
+    if link_type == "franchise":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Franchise çalışanına doğrudan müdahale edemezsiniz. Yalnızca görüntüleyebilir, öneri iletebilirsiniz.",
+        )
+    # "full" -> izin
