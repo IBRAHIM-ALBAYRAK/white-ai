@@ -1,0 +1,119 @@
+"""
+app/modules/oversight/router.py
+
+Brand → sub-company (franchise) management.
+
+  POST /api/v1/oversight/subs        → brand creates a sub-company + oversight link
+  GET  /api/v1/oversight/subs        → brand lists its sub-companies (with link_type)
+
+Rules:
+  - Only an OWNER (or SUPERADMIN) may manage subs. A manager cannot.
+  - The caller's company becomes the brand. On the first sub it creates, the
+    caller's company is auto-promoted to company_type="brand".
+  - The new sub-company gets company_type="sub" and an oversight_links row
+    (brand_company_id = caller's company, sub_company_id = new, link_type chosen).
+  - Owner assignment is a SEPARATE step (POST /users with company_id + role=owner).
+"""
+
+import uuid
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
+from app.core.deps import require_role, is_franchise_company
+from app.modules.auth.models import User, UserRole
+from app.modules.company.models import Company, OversightLink
+from app.modules.company.schemas import CompanyCreateSchema
+from app.modules.company.service import company_service
+from app.modules.oversight.schemas import SubCreateSchema, SubResponseSchema
+
+router = APIRouter(prefix="/oversight", tags=["Oversight (Brand)"])
+
+owner_only = require_role(UserRole.SUPERADMIN, UserRole.OWNER)
+
+
+def _validate_link_type(link_type: str) -> str:
+    lt = (link_type or "").lower()
+    if lt not in ("full", "franchise"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="link_type 'full' veya 'franchise' olmali.")
+    return lt
+
+
+@router.post("/subs", response_model=SubResponseSchema)
+async def create_sub(
+    data: SubCreateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(owner_only),
+):
+    link_type = _validate_link_type(data.link_type)
+
+    if current_user.company_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bir markaya bagli degilsiniz.")
+
+    # Bir franchise (baska bir markanin alt sirketi) kendi altina sub/franchise acamaz.
+    # Sadece superadmin ya da kendisi franchise OLMAYAN bir company sub ekleyebilir.
+    if current_user.role != UserRole.SUPERADMIN and await is_franchise_company(db, current_user.company_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bir markanin franchise'i oldugunuz icin alt sirket ekleyemezsiniz.",
+        )
+
+    brand_id = current_user.company_id
+
+    # 1) Create the sub-company (reuse company service for email-uniqueness etc.)
+    sub = await company_service.create_company(
+        db, CompanyCreateSchema(name=data.name, email=data.email, phone=data.phone, address=data.address)
+    )
+    sub.company_type = "sub"
+
+    # 2) Promote the caller's company to "brand" if not already.
+    brand = (await db.execute(select(Company).where(Company.id == brand_id))).scalar_one_or_none()
+    if brand is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marka sirketi bulunamadi.")
+    if brand.company_type != "brand":
+        brand.company_type = "brand"
+
+    # 3) Create the oversight link brand → sub.
+    link = OversightLink(
+        id=str(uuid.uuid4()),
+        brand_company_id=brand_id,
+        sub_company_id=sub.id,
+        link_type=link_type,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(link)
+    await db.flush()
+    await db.refresh(sub)
+
+    return SubResponseSchema(
+        id=sub.id, name=sub.name, email=sub.email, phone=sub.phone, address=sub.address,
+        company_type=sub.company_type, is_active=sub.is_active, link_type=link_type,
+        created_at=sub.created_at,
+    )
+
+
+@router.get("/subs", response_model=list[SubResponseSchema])
+async def list_subs(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(owner_only),
+):
+    if current_user.company_id is None:
+        return []
+    brand_id = current_user.company_id
+
+    rows = (await db.execute(
+        select(Company, OversightLink.link_type)
+        .join(OversightLink, OversightLink.sub_company_id == Company.id)
+        .where(OversightLink.brand_company_id == brand_id)
+        .order_by(Company.created_at.desc())
+    )).all()
+
+    return [
+        SubResponseSchema(
+            id=c.id, name=c.name, email=c.email, phone=c.phone, address=c.address,
+            company_type=c.company_type, is_active=c.is_active, link_type=lt,
+            created_at=c.created_at,
+        )
+        for (c, lt) in rows
+    ]

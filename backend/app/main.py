@@ -36,6 +36,7 @@ from app.modules.inventory.router import router as inventory_router
 from app.modules.inventory.change_request_router import router as inventory_change_request_router
 from app.modules.timeclock.router import router as timeclock_router
 from app.modules.users.router import router as users_router
+from app.modules.oversight.router import router as oversight_router
 from app.modules.employees.router import router as employees_router
 from app.modules.employee_portal.leaves.router import router as leaves_router
 from app.modules.employee_portal.announcements.router import router as announcements_router
@@ -88,6 +89,7 @@ app.include_router(inventory_router, prefix="/api/v1")
 app.include_router(inventory_change_request_router, prefix="/api/v1")
 app.include_router(timeclock_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
+app.include_router(oversight_router, prefix="/api/v1")
 app.include_router(employees_router, prefix="/api/v1")
 
 # --- Employee portal routers ---
