@@ -557,6 +557,7 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
   const [managerForm, setManagerForm] = useState({ first_name:"", last_name:"", email:"", password:"" });
   const [managerError, setManagerError] = useState("");
   const [managerSaving, setManagerSaving] = useState(false);
+  const [managers, setManagers] = useState<any[]>([]);
   const [employeeForm, setEmployeeForm] = useState({
     first_name:"", last_name:"", email:"", phone:"",
     position:"", department:"", contract_type:"full_time",
@@ -598,6 +599,10 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
     try { const res = await axios.get(`${API_URL}/employees/branch/${branchId}`, { headers }); setEmployees(res.data); }
     catch { }
   };
+  const loadManagers = async (branchId: string) => {
+    try { const res = await axios.get(`${API_URL}/users/branch/${branchId}`, { headers }); setManagers(res.data.filter((u: any) => u.role === "manager")); }
+    catch { setManagers([]); }
+  };
   const assignManager = async () => {
     setManagerError("");
     if (!managerForm.first_name || !managerForm.email || !managerForm.password) {
@@ -617,6 +622,7 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
       }, { headers });
       setShowManagerForm(false);
       setManagerForm({ first_name:"", last_name:"", email:"", password:"" });
+      if (selectedBranch) loadManagers(selectedBranch.id);
     } catch (e: any) {
       setManagerError(e.response?.data?.detail || "Yönetici atanamadı.");
     } finally {
@@ -768,7 +774,7 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
     } finally { setDeleteLoading(false); }
   };
   const selectCompany = (c: any) => { setSelectedCompany(c); setSelectedBranch(null); setEmployees([]); loadBranches(c.id); loadSuspendedBranches(c.id); };
-  const selectBranch = (b: any) => { setSelectedBranch(b); loadEmployees(b.id); loadInactiveEmployees(b.id); };
+  const selectBranch = (b: any) => { setSelectedBranch(b); loadEmployees(b.id); loadInactiveEmployees(b.id); loadManagers(b.id); };
 
   const contractLabel = (ct: string) => ({ full_time:"Full Time", part_time:"Part Time", temporary:"Temporary", intern:"Intern" }[ct] || ct);
 
@@ -1181,7 +1187,22 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
               <div className="section-label" style={{marginBottom:0}}>{isBrand ? "Yöneticiler" : "Employees"} — {selectedBranch.name}</div>
               <button className="btn-ghost-sm" onClick={() => isBrand ? setShowManagerForm(true) : setShowEmployeeForm(true)}>{isBrand ? "+ Yönetici Ata" : "+ Add"}</button>
               </div>
-              {employees.length === 0 ? <div className="empty-state"><p className="empty-state-text">No employees yet.</p></div>
+              {isBrand ? (
+                managers.length === 0 ? <div className="empty-state"><p className="empty-state-text">Henüz yönetici atanmamış.</p></div>
+                : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {managers.map(m => (
+                      <div key={m.id} className="app-card" style={{padding:"14px 16px"}}>
+                        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div className="list-item-title">{m.first_name} {m.last_name}</div>
+                            <div className="list-item-sub">{m.email}</div>
+                            <span className="badge badge-grey" style={{marginTop:4,display:"inline-block"}}>Yönetici</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+              ) : employees.length === 0 ? <div className="empty-state"><p className="empty-state-text">No employees yet.</p></div>
               : <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {employees.map(e => (
                     <div key={e.id} className="app-card" style={{padding:"14px 16px",cursor:"pointer"}} onClick={() => setDetailEmployee(e)}>

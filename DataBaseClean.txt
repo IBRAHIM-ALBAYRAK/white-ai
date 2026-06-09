@@ -1,0 +1,24 @@
+docker exec white_ai_postgres psql -U whiteai -d whiteai_db -c "
+DELETE FROM payslips;
+DELETE FROM timeclock_records;
+DELETE FROM shift_assignments;
+DELETE FROM shift_swap_requests;
+DELETE FROM shifts;
+DELETE FROM leave_requests;
+DELETE FROM announcements;
+DELETE FROM employee_documents;
+DELETE FROM inventory_stock_movements;
+DELETE FROM inventory_change_requests;
+DELETE FROM inventory_products;
+DELETE FROM inventory_categories;
+DELETE FROM inventory_suppliers;
+DELETE FROM employees;
+DELETE FROM oversight_links;
+DELETE FROM users WHERE role <> 'SUPERADMIN';
+DELETE FROM branches;
+DELETE FROM companies;
+"
+
+
+
+docker exec white_ai_postgres psql -U whiteai -d whiteai_db -c "SELECT 'users' t, count(*) FROM users UNION ALL SELECT 'companies', count(*) FROM companies UNION ALL SELECT 'branches', count(*) FROM branches;"
