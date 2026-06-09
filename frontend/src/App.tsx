@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
 import EmployeePortal from "./EmployeePortal";
+import { FranchisesPage } from "./FranchisesPage";
+
 
 const API_URL = "http://127.0.0.1:8000/api/v1";
 
@@ -299,15 +301,17 @@ const navItems = [
   { id: "payroll", label: "Bordro", icon: "💰" },
 ];
 
-function Sidebar({ active, onNavigate, user, onLogout, onChangePassword }: {
+function Sidebar({ active, onNavigate, user, onLogout, onChangePassword, items }: {
   active: string; onNavigate: (page: string) => void; user: User; onLogout: () => void; onChangePassword: () => void;
+  items?: { id: string; label: string; icon: string }[];
 }) {
   const [showMenu, setShowMenu] = useState(false);
+  const menuItems = items ?? navItems;
   return (
     <div className="app-sidebar">
       <div className="app-sidebar-logo">WHITE<span>.</span>AI</div>
       <nav className="app-sidebar-nav">
-        {navItems.map((item) => (
+        {menuItems.map((item) => (
           <button key={item.id} className={`app-nav-item ${active === item.id ? "active" : ""}`} onClick={() => onNavigate(item.id)}>
             <span className="nav-icon">{item.icon}</span>
             <span>{item.label}</span>
@@ -531,7 +535,7 @@ function EmployeeDetailModal({
 
 
 // --- Companies Page ---
-function CompaniesPage({ token }: { token: string }) {
+function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean }) {
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -574,7 +578,7 @@ function CompaniesPage({ token }: { token: string }) {
   
   const loadCompanies = async () => {
     setLoading(true);
-    try { const res = await axios.get(`${API_URL}/companies`, { headers }); setCompanies(res.data); }
+    try { const res = await axios.get(`${API_URL}/companies`, { headers }); setCompanies(isBrand ? res.data.filter((c: any) => c.company_type === "brand") : res.data); }
     catch { } finally { setLoading(false); }
   };
   const loadBranches = async (id: string) => {
@@ -720,11 +724,11 @@ function CompaniesPage({ token }: { token: string }) {
   return (
     <div>
       <div className="page-header" style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
-        <div>
-          <h1 className="page-title">Companies</h1>
-          <p className="page-subtitle">Manage your companies, branches and employees.</p>
+      <div>
+          <h1 className="page-title">{isBrand ? "Şirketim" : "Companies"}</h1>
+          <p className="page-subtitle">{isBrand ? "Ana şirketinizi ve şubelerinizi yönetin." : "Manage your companies, branches and employees."}</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowForm(true)}>+ New Company</button>
+        {!isBrand && <button className="btn-primary" onClick={() => setShowForm(true)}>+ New Company</button>}
       </div>
       
       {detailEmployee && (
@@ -931,7 +935,7 @@ function CompaniesPage({ token }: { token: string }) {
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20}}>
         {/* Companies */}
         <div>
-          <div className="section-label">All Companies</div>
+          <div className="section-label">{isBrand ? "Ana Şirket" : "All Companies"}</div>
           {loading ? <p style={{fontSize:14,color:"#9b9b93"}}>Loading...</p>
           : companies.length === 0 ? <div className="empty-state"><p className="empty-state-text">No companies yet.</p></div>
           : <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -942,9 +946,9 @@ function CompaniesPage({ token }: { token: string }) {
                       <div className="list-item-title">{c.name}</div>
                       <div className="list-item-sub">{c.email}</div>
                     </div>
-                    <button className="btn-danger" onClick={(ev) => { ev.stopPropagation(); setCompanyAction({ company: c, mode: "suspend" }); setCompanyActionError(""); setCompanyAdminPassword(""); }} style={{flexShrink:0,marginLeft:8,padding:"4px 10px",fontSize:11}}>
+                    {!isBrand && <button className="btn-danger" onClick={(ev) => { ev.stopPropagation(); setCompanyAction({ company: c, mode: "suspend" }); setCompanyActionError(""); setCompanyAdminPassword(""); }} style={{flexShrink:0,marginLeft:8,padding:"4px 10px",fontSize:11}}>
                       Askıya Al
-                    </button>
+                    </button>}
                   </div>
                 </div>
               ))}
@@ -1930,20 +1934,33 @@ function PayrollPage({ token }: { token: string }) {
 function MainApp({ user, token, onLogout }: { user: User; token: string; onLogout: () => void }) {
   const [page, setPage] = useState("dashboard");
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [companyType, setCompanyType] = useState<string | null>(null);
+
+  // Kullanıcının company_type'ını çek (brand/sub/standalone) → panel dallanması için.
+  useEffect(() => {
+    if (!user.company_id) return;
+    axios.get(`${API_URL}/companies/${user.company_id}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => setCompanyType(res.data.company_type))
+      .catch(() => setCompanyType(null));
+  }, [user.company_id, token]);
+
+  const isBrand = companyType === "brand";
 
   const pageTitle: Record<string,string> = {
     dashboard:"Dashboard", companies:"Companies",
-    workforce:"Workforce", inventory:"Inventory", timeclock:"Time Clock", payroll:"Bordro"
+    workforce:"Workforce", inventory:"Inventory", timeclock:"Time Clock", payroll:"Bordro",
+    franchises:"Franchise'larım"
   };
 
   const renderPage = () => {
     switch (page) {
       case "dashboard": return <DashboardPage user={user} />;
-      case "companies": return <CompaniesPage token={token} />;
+      case "companies": return <CompaniesPage token={token} isBrand={isBrand} />;
       case "workforce": return <WorkforcePage token={token} />;
       case "inventory": return <InventoryPage token={token} />;
       case "timeclock": return <TimeClockPage token={token} />;
       case "payroll": return <PayrollPage token={token} />;
+      case "franchises": return <FranchisesPage token={token} />;
       default: return <DashboardPage user={user} />;
     }
   };
@@ -1952,8 +1969,8 @@ function MainApp({ user, token, onLogout }: { user: User; token: string; onLogou
     <>
       <style>{appStyles}</style>
       <div className="app-wrap">
-        {showChangePassword && <ChangePasswordModal token={token} onClose={() => setShowChangePassword(false)} />}
-        <Sidebar active={page} onNavigate={setPage} user={user} onLogout={onLogout} onChangePassword={() => setShowChangePassword(true)} />
+      {showChangePassword && <ChangePasswordModal token={token} onClose={() => setShowChangePassword(false)} />}
+      <Sidebar active={page} onNavigate={setPage} user={user} onLogout={onLogout} onChangePassword={() => setShowChangePassword(true)} items={isBrand ? [...navItems, { id: "franchises", label: "Franchise'larım", icon: "🔗" }] : navItems} />
         <div className="app-main">
           <div className="app-topbar">
             <span className="app-topbar-title">{pageTitle[page]}</span>
