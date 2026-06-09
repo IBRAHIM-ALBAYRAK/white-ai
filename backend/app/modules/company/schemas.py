@@ -42,6 +42,7 @@ class CompanyResponseSchema(BaseModel):
     phone: Optional[str]
     address: Optional[str]
     company_type: str
+    legal_name: Optional[str] = None
     is_active: bool
     created_at: datetime
     model_config = {"from_attributes": True}

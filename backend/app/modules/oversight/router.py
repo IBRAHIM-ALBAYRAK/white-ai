@@ -26,7 +26,10 @@ from app.modules.auth.models import User, UserRole
 from app.modules.company.models import Company, OversightLink
 from app.modules.company.schemas import CompanyCreateSchema
 from app.modules.company.service import company_service
-from app.modules.oversight.schemas import SubCreateSchema, SubResponseSchema
+from app.modules.oversight.schemas import SubCreateSchema, SubResponseSchema, BrandCreateSchema, BrandCreateResponseSchema
+from app.modules.users.schemas import EmployeeCreateSchema
+from app.modules.users.service import user_service
+
 
 router = APIRouter(prefix="/oversight", tags=["Oversight (Brand)"])
 
@@ -38,6 +41,46 @@ def _validate_link_type(link_type: str) -> str:
     if lt not in ("full", "franchise"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="link_type 'full' veya 'franchise' olmali.")
     return lt
+
+
+superadmin_only = require_role(UserRole.SUPERADMIN)
+
+
+@router.post("/brands", response_model=BrandCreateResponseSchema)
+async def create_brand(
+    data: BrandCreateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(superadmin_only),
+):
+    """WHITE.AI (superadmin) onboards a brand customer: creates the brand company
+    AND its owner account in one shot. Atomic: both or neither."""
+    # 1) Marka sirketini olustur, company_type='brand'
+    company = await company_service.create_company(
+        db, CompanyCreateSchema(name=data.name, email=data.email, phone=data.phone, address=data.address)
+    )
+    company.company_type = "brand"
+    company.legal_name = data.legal_name
+    await db.flush()
+
+    # 2) Marka sahibi (owner) hesabini olustur
+    owner = await user_service.create_employee(
+        db,
+        EmployeeCreateSchema(
+            first_name=data.owner_first_name,
+            last_name=data.owner_last_name,
+            email=data.owner_email,
+            password=data.owner_password,
+            company_id=company.id,
+            role="owner",
+        ),
+    )
+
+    return BrandCreateResponseSchema(
+        company_id=company.id,
+        company_name=company.name,
+        owner_email=owner.email,
+        owner_user_id=owner.id,
+    )
 
 
 @router.post("/subs", response_model=SubResponseSchema)

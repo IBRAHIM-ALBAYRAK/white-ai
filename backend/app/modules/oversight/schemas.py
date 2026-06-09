@@ -33,3 +33,23 @@ class SubResponseSchema(BaseModel):
     link_type: str
     created_at: datetime
     model_config = {"from_attributes": True}
+
+
+class BrandCreateSchema(BaseModel):
+    """Superadmin creates a brand company + its owner account in one shot."""
+    name: str
+    legal_name: Optional[str] = None
+    email: EmailStr
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    owner_first_name: str
+    owner_last_name: str = ""
+    owner_email: EmailStr
+    owner_password: str
+
+
+class BrandCreateResponseSchema(BaseModel):
+    company_id: str
+    company_name: str
+    owner_email: str
+    owner_user_id: str

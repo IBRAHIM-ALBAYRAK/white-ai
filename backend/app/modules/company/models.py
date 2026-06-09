@@ -18,6 +18,9 @@ class Company(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Yasal şirket adı (örn. "Nevada Coffee Gıda A.Ş."). Sadece marka için dolu;
+    # franchise/standalone için null kalabilir. name = görünen/marka adı.
+    legal_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # "brand" (marka sahibi), "sub" (alt şirket: kendi şube veya franchise), "standalone" (tek başına)
     company_type: Mapped[str] = mapped_column(String(20), nullable=False, default="standalone")
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)

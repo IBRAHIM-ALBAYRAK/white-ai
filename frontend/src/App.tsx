@@ -540,6 +540,11 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name:"", email:"", phone:"", address:"" });
+  const [showBrandForm, setShowBrandForm] = useState(false);
+  const [brandForm, setBrandForm] = useState({ name:"", legal_name:"", email:"", phone:"", address:"", owner_first_name:"", owner_last_name:"", owner_email:"", owner_password:"" });
+  const [brandResult, setBrandResult] = useState<any>(null);
+  const [brandError, setBrandError] = useState("");
+  const [brandSaving, setBrandSaving] = useState(false);
   const [error, setError] = useState("");
   const [selectedCompany, setSelectedCompany] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
@@ -548,6 +553,10 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
   const [selectedBranch, setSelectedBranch] = useState<any>(null);
   const [employees, setEmployees] = useState<any[]>([]);
   const [showEmployeeForm, setShowEmployeeForm] = useState(false);
+  const [showManagerForm, setShowManagerForm] = useState(false);
+  const [managerForm, setManagerForm] = useState({ first_name:"", last_name:"", email:"", password:"" });
+  const [managerError, setManagerError] = useState("");
+  const [managerSaving, setManagerSaving] = useState(false);
   const [employeeForm, setEmployeeForm] = useState({
     first_name:"", last_name:"", email:"", phone:"",
     position:"", department:"", contract_type:"full_time",
@@ -588,6 +597,31 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
   const loadEmployees = async (branchId: string) => {
     try { const res = await axios.get(`${API_URL}/employees/branch/${branchId}`, { headers }); setEmployees(res.data); }
     catch { }
+  };
+  const assignManager = async () => {
+    setManagerError("");
+    if (!managerForm.first_name || !managerForm.email || !managerForm.password) {
+      setManagerError("Ad, e-posta ve şifre zorunlu."); return;
+    }
+    if (!selectedCompany || !selectedBranch) { setManagerError("Önce şube seçin."); return; }
+    setManagerSaving(true);
+    try {
+      await axios.post(`${API_URL}/users`, {
+        first_name: managerForm.first_name,
+        last_name: managerForm.last_name,
+        email: managerForm.email,
+        password: managerForm.password,
+        company_id: selectedCompany.id,
+        branch_id: selectedBranch.id,
+        role: "manager",
+      }, { headers });
+      setShowManagerForm(false);
+      setManagerForm({ first_name:"", last_name:"", email:"", password:"" });
+    } catch (e: any) {
+      setManagerError(e.response?.data?.detail || "Yönetici atanamadı.");
+    } finally {
+      setManagerSaving(false);
+    }
   };
   const loadInactiveEmployees = async (branchId: string) => {
     try { const res = await axios.get(`${API_URL}/employees/branch/${branchId}/inactive`, { headers }); setInactiveEmployees(res.data); }
@@ -663,6 +697,23 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
       setShowForm(false); setForm({ name:"", email:"", phone:"", address:"" }); loadCompanies();
     } catch (err: any) { setError(err.response?.data?.detail || "Failed to create company."); }
   };
+  const createBrand = async () => {
+    setBrandError("");
+    if (!brandForm.name || !brandForm.email || !brandForm.owner_first_name || !brandForm.owner_email || !brandForm.owner_password) {
+      setBrandError("Marka adı, marka e-posta, sahip adı, sahip e-posta ve şifre zorunlu."); return;
+    }
+    setBrandSaving(true);
+    try {
+      const res = await axios.post(`${API_URL}/oversight/brands`, brandForm, { headers });
+      setBrandResult(res.data);
+      setBrandForm({ name:"", legal_name:"", email:"", phone:"", address:"", owner_first_name:"", owner_last_name:"", owner_email:"", owner_password:"" });
+      loadCompanies();
+    } catch (e: any) {
+      setBrandError(e.response?.data?.detail || "Marka müşterisi eklenemedi.");
+    } finally {
+      setBrandSaving(false);
+    }
+  };
   const createBranch = async () => {
     if (!selectedCompany) return;
     try {
@@ -728,7 +779,7 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
           <h1 className="page-title">{isBrand ? "Şirketim" : "Companies"}</h1>
           <p className="page-subtitle">{isBrand ? "Ana şirketinizi ve şubelerinizi yönetin." : "Manage your companies, branches and employees."}</p>
         </div>
-        {!isBrand && <button className="btn-primary" onClick={() => setShowForm(true)}>+ New Company</button>}
+        {!isBrand && <button className="btn-primary" onClick={() => { setShowBrandForm(true); setBrandResult(null); setBrandError(""); }}>+ Marka Müşterisi Ekle</button>}
       </div>
       
       {detailEmployee && (
@@ -758,9 +809,52 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
               <button className="btn-primary" onClick={createCompany} style={{width:"100%",justifyContent:"center",padding:"13px",marginTop:4}}>Create Company</button>
             </div>
           </div>
+          </div>
+      )}
+      {showBrandForm && (
+        <div className="app-modal-overlay">
+          <div className="app-modal">
+            <div className="app-modal-header">
+              <span className="app-modal-title">{brandResult ? "Marka Müşterisi Oluşturuldu" : "Marka Müşterisi Ekle"}</span>
+              <button className="app-modal-close" onClick={() => { setShowBrandForm(false); setBrandResult(null); setBrandError(""); }}>✕</button>
+            </div>
+            {brandResult ? (
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <div style={{padding:"14px 16px",background:"#f0fdf4",borderRadius:10,border:"1px solid #bbf7d0"}}>
+                  <div style={{fontSize:14,fontWeight:700,color:"#0a0a0a",marginBottom:4}}>{brandResult.company_name}</div>
+                  <div style={{fontSize:12.5,color:"#15803d"}}>Marka ve sahip hesabı oluşturuldu. Giriş bilgilerini markaya iletin:</div>
+                </div>
+                <div style={{padding:"14px 16px",background:"#f8f7f4",borderRadius:10,border:"1px solid #e5e4e0"}}>
+                  <div style={{fontSize:12,color:"#9b9b93",marginBottom:4}}>Giriş E-postası</div>
+                  <div style={{fontSize:14,fontWeight:600,color:"#0a0a0a",marginBottom:12}}>{brandResult.owner_email}</div>
+                  <div style={{fontSize:12,color:"#9b9b93"}}>Şifre, oluştururken girdiğiniz geçici şifredir. Marka sahibi giriş sonrası değiştirebilir.</div>
+                </div>
+                <button className="btn-primary" onClick={() => { setShowBrandForm(false); setBrandResult(null); }} style={{width:"100%",justifyContent:"center",padding:"13px"}}>Tamam</button>
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <div className="section-label" style={{marginTop:0}}>Marka Bilgileri</div>
+                <div><label className="app-label">Marka Adı (görünen) *</label><input value={brandForm.name} onChange={(e) => setBrandForm({...brandForm,name:e.target.value})} className="app-input" placeholder="örn. Nevada Coffee" /></div>
+                <div><label className="app-label">Yasal Şirket Adı</label><input value={brandForm.legal_name} onChange={(e) => setBrandForm({...brandForm,legal_name:e.target.value})} className="app-input" placeholder="örn. Nevada Coffee Gıda A.Ş." /></div>               
+                <div><label className="app-label">Marka E-posta *</label><input type="email" value={brandForm.email} onChange={(e) => setBrandForm({...brandForm,email:e.target.value})} className="app-input" /></div>
+                <div style={{display:"flex",gap:12}}>
+                  <div style={{flex:1}}><label className="app-label">Telefon</label><input value={brandForm.phone} onChange={(e) => setBrandForm({...brandForm,phone:e.target.value})} className="app-input" /></div>
+                  <div style={{flex:1}}><label className="app-label">Adres</label><input value={brandForm.address} onChange={(e) => setBrandForm({...brandForm,address:e.target.value})} className="app-input" /></div>
+                </div>
+                <div className="section-label">Marka Sahibi (Giriş Hesabı)</div>
+                <div style={{display:"flex",gap:12}}>
+                  <div style={{flex:1}}><label className="app-label">Ad *</label><input value={brandForm.owner_first_name} onChange={(e) => setBrandForm({...brandForm,owner_first_name:e.target.value})} className="app-input" /></div>
+                  <div style={{flex:1}}><label className="app-label">Soyad</label><input value={brandForm.owner_last_name} onChange={(e) => setBrandForm({...brandForm,owner_last_name:e.target.value})} className="app-input" /></div>
+                </div>
+                <div><label className="app-label">Sahip E-postası (giriş) *</label><input type="email" value={brandForm.owner_email} onChange={(e) => setBrandForm({...brandForm,owner_email:e.target.value})} className="app-input" /></div>
+                <div><label className="app-label">Geçici Şifre *</label><input value={brandForm.owner_password} onChange={(e) => setBrandForm({...brandForm,owner_password:e.target.value})} className="app-input" placeholder="Marka sahibi sonra değiştirir" /></div>
+                {brandError && <div className="inline-error">⚠ {brandError}</div>}
+                <button className="btn-primary" onClick={createBrand} disabled={brandSaving} style={{width:"100%",justifyContent:"center",padding:"13px",marginTop:4}}>{brandSaving ? "Oluşturuluyor..." : "Marka Müşterisi Oluştur"}</button>
+              </div>
+            )}
+          </div>
         </div>
       )}
-
       {showEmployeeForm && selectedBranch && (
         <div className="app-modal-overlay">
           <div className="app-modal">
@@ -826,12 +920,36 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
 
               {employeeError && <div className="inline-error">⚠ {employeeError}</div>}
               <button className="btn-primary" onClick={createEmployee} style={{width:"100%",justifyContent:"center",padding:"13px",marginTop:4}}>Create Employee</button>
+              </div>
+          </div>
+        </div>
+      )}
+      {showManagerForm && selectedBranch && (
+        <div className="app-modal-overlay">
+          <div className="app-modal">
+            <div className="app-modal-header">
+              <span className="app-modal-title">Yönetici Ata</span>
+              <button className="app-modal-close" onClick={() => { setShowManagerForm(false); setManagerError(""); }}>✕</button>
+            </div>
+            <div style={{marginBottom:16,padding:"12px 16px",background:"#f8f7f4",borderRadius:10,border:"1px solid #e5e4e0"}}>
+              <div style={{fontSize:13,fontWeight:600,color:"#0a0a0a"}}>{selectedBranch.name}</div>
+              <div style={{fontSize:12,color:"#9b9b93"}}>Bu şubeye yönetici (manager) hesabı oluşturulacak.</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              <div style={{display:"flex",gap:12}}>
+                <div style={{flex:1}}><label className="app-label">Ad *</label><input value={managerForm.first_name} onChange={(e) => setManagerForm({...managerForm,first_name:e.target.value})} className="app-input" /></div>
+                <div style={{flex:1}}><label className="app-label">Soyad</label><input value={managerForm.last_name} onChange={(e) => setManagerForm({...managerForm,last_name:e.target.value})} className="app-input" /></div>
+              </div>
+              <div><label className="app-label">E-posta *</label><input type="email" value={managerForm.email} onChange={(e) => setManagerForm({...managerForm,email:e.target.value})} className="app-input" /></div>
+              <div><label className="app-label">Geçici Şifre *</label><input value={managerForm.password} onChange={(e) => setManagerForm({...managerForm,password:e.target.value})} className="app-input" placeholder="Yönetici sonra değiştirir" /></div>
+              {managerError && <div className="inline-error">⚠ {managerError}</div>}
+              <button className="btn-primary" onClick={assignManager} disabled={managerSaving} style={{width:"100%",justifyContent:"center",padding:"13px",marginTop:4}}>
+                {managerSaving ? "Atanıyor..." : "Yönetici Oluştur ve Ata"}
+              </button>
             </div>
           </div>
         </div>
       )}
-
-
 {branchAction && (
         <div className="app-modal-overlay">
           <div className="app-modal">
@@ -1060,8 +1178,8 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
           {selectedBranch ? (
             <>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-                <div className="section-label" style={{marginBottom:0}}>Employees — {selectedBranch.name}</div>
-                <button className="btn-ghost-sm" onClick={() => setShowEmployeeForm(true)}>+ Add</button>
+              <div className="section-label" style={{marginBottom:0}}>{isBrand ? "Yöneticiler" : "Employees"} — {selectedBranch.name}</div>
+              <button className="btn-ghost-sm" onClick={() => isBrand ? setShowManagerForm(true) : setShowEmployeeForm(true)}>{isBrand ? "+ Yönetici Ata" : "+ Add"}</button>
               </div>
               {employees.length === 0 ? <div className="empty-state"><p className="empty-state-text">No employees yet.</p></div>
               : <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -1944,7 +2062,7 @@ function MainApp({ user, token, onLogout }: { user: User; token: string; onLogou
       .catch(() => setCompanyType(null));
   }, [user.company_id, token]);
 
-  const isBrand = companyType === "brand";
+  const isBrand = companyType === "brand" && user.role === "owner";
 
   const pageTitle: Record<string,string> = {
     dashboard:"Dashboard", companies:"Companies",
