@@ -4,7 +4,7 @@ import axios from "axios";
 // ============================================================================
 // WHITE.AI — Marka Sahibi Paneli (Panel 2)
 // Beyaz agirlikli + yesil accent + siyah metin.
-// Genel Bakis + Sirketim gercek API'ye bagli. Diger 7 sayfa placeholder.
+// Genel Bakis + Sirketim + Franchise'larim gercek API'ye bagli. Diger 6 placeholder.
 // ============================================================================
 
 const API_URL = "http://127.0.0.1:8000/api/v1";
@@ -36,6 +36,8 @@ const C = {
   dangerBg: "#FEF2F2",
   dangerInk: "#DC2626",
   dangerBorder: "#FECACA",
+  franchise: "#7C5CE6",
+  franchiseSoft: "#F1EEFB",
 };
 
 const NAV_ITEMS: { id: string; label: string; icon: string }[] = [
@@ -138,7 +140,9 @@ export default function BrandPanel({
         <div style={{ padding: "24px 26px", overflow: "auto" }}>
           {page === "overview" && <OverviewPage firstName={user.first_name} token={token} />}
           {page === "company" && <CompanyPage token={token} companyId={user.company_id || ""} brandName={brandName} />}
-          {page !== "overview" && page !== "company" && <Placeholder title={PAGE_TITLE[page]} />}
+          {page === "franchises" && <FranchisePage token={token} />}
+          {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} />}
+          {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && <Placeholder title={PAGE_TITLE[page]} />}
         </div>
       </main>
     </div>
@@ -621,6 +625,134 @@ function CompanyPage({ token, companyId, brandName }: { token: string; companyId
 }
 
 // ============================================================================
+// Franchise'larim — gozetim (read-only). /oversight/subs + /franchises/{id}/summary
+// ============================================================================
+type Franchise = { id: string; name: string; email: string; phone?: string; address?: string; is_active: boolean; link_type: string };
+type FranchiseSummary = { staff: number; on_duty: number; critical_stock: number };
+
+function FranchisePage({ token }: { token: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const [franchises, setFranchises] = useState<Franchise[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Franchise | null>(null);
+  const [summary, setSummary] = useState<FranchiseSummary | null>(null);
+  const [sumLoading, setSumLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await axios.get(`${API_URL}/oversight/subs`, { headers });
+        if (alive) { setFranchises(r.data.filter((s: Franchise) => s.link_type === "franchise")); setLoading(false); }
+      } catch { if (alive) setLoading(false); }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line
+  }, [token]);
+
+  const selectFranchise = async (f: Franchise) => {
+    setSelected(f); setSummary(null); setSumLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/oversight/franchises/${f.id}/summary`, { headers });
+      setSummary(r.data);
+    } catch { setSummary(null); }
+    setSumLoading(false);
+  };
+
+  return (
+    <>
+      <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 3 }}>Franchise'larım</div>
+      <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 18 }}>Markanı kullanan franchise lokasyonlarını izle. Her biri ayrı bir işletmedir — görürsün, yönetmezsin.</div>
+
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "11px 15px", marginBottom: 20, display: "flex", alignItems: "center", gap: 9 }}>
+        <i className="ti ti-eye" style={{ fontSize: 17, color: C.greenDark }} aria-hidden="true" />
+        <span style={{ fontSize: 12.5, color: C.textMuted }}>Gözetim modu — franchise verilerini görüntülersin, operasyonlarına müdahale edemezsin.</span>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 18 }}>
+        {/* SOL — franchise listesi */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Franchise Lokasyonları</div>
+          {loading ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+          ) : franchises.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+              <i className="ti ti-link-off" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Henüz franchise yok.</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {franchises.map((f) => {
+                const isSel = selected?.id === f.id;
+                return (
+                  <div key={f.id} onClick={() => selectFranchise(f)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 9, background: isSel ? C.greenSoft : C.neutralBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <i className="ti ti-building-store" style={{ fontSize: 18, color: isSel ? C.greenDark : C.textFaint }} aria-hidden="true" />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: isSel ? 600 : 500 }}>{f.name}</div>
+                        {f.address && <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 4, marginTop: 1 }}><i className="ti ti-map-pin" style={{ fontSize: 12 }} aria-hidden="true" />{f.address}</div>}
+                      </div>
+                    </div>
+                    {isSel && <i className="ti ti-chevron-right" style={{ fontSize: 16, color: C.green, flexShrink: 0 }} aria-hidden="true" />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* SAG — gozetim ozeti */}
+        <div>
+          {!selected ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
+              <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Gözetim özeti için bir franchise seçin.</span>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{selected.name}</span>
+                <span style={{ fontSize: 10.5, color: selected.is_active ? C.greenDark : C.textFaint, background: selected.is_active ? C.greenSoft : C.neutralBg, padding: "3px 9px", borderRadius: 12, fontWeight: 600 }}>{selected.is_active ? "Aktif" : "Pasif"}</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 14, display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-mail" style={{ fontSize: 13 }} aria-hidden="true" />{selected.email}</div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "13px 14px" }}>
+                  <div style={{ fontSize: 11, color: C.textFaint, display: "flex", alignItems: "center", gap: 5, marginBottom: 5 }}><i className="ti ti-users" style={{ fontSize: 13 }} aria-hidden="true" />Personel</div>
+                  <div style={{ fontSize: 21, fontWeight: 600 }}>{sumLoading ? "—" : (summary?.staff ?? 0)}</div>
+                </div>
+                <div style={{ background: C.ink, borderRadius: 10, padding: "13px 14px" }}>
+                  <div style={{ fontSize: 11, color: "#9DE8BE", display: "flex", alignItems: "center", gap: 5, marginBottom: 5 }}><i className="ti ti-activity" style={{ fontSize: 13 }} aria-hidden="true" />Bugün mesaide</div>
+                  <div style={{ fontSize: 21, fontWeight: 600, color: "#fff" }}>{sumLoading ? "—" : (summary?.on_duty ?? 0)}<span style={{ fontSize: 12, color: "#9DE8BE", fontWeight: 400 }}>/{sumLoading ? "—" : (summary?.staff ?? 0)}</span></div>
+                </div>
+              </div>
+
+              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "14px 16px", marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-box" style={{ fontSize: 14, color: C.textMuted }} aria-hidden="true" />Envanter Durumu</div>
+                {sumLoading ? (
+                  <div style={{ fontSize: 12, color: C.textHint }}>Yükleniyor…</div>
+                ) : (summary?.critical_stock ?? 0) > 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.warnInk }}><i className="ti ti-alert-triangle" style={{ fontSize: 14 }} aria-hidden="true" />{summary!.critical_stock} üründe kritik stok</div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.green }}><i className="ti ti-circle-check" style={{ fontSize: 14 }} aria-hidden="true" />Stok seviyeleri normal</div>
+                )}
+              </div>
+
+              <div style={{ background: C.surface, border: `1px dashed ${C.border}`, borderRadius: 11, padding: "13px 16px", display: "flex", alignItems: "center", gap: 9 }}>
+                <i className="ti ti-lock" style={{ fontSize: 16, color: C.textHint }} aria-hidden="true" />
+                <span style={{ fontSize: 11.5, color: C.textFaint }}>Bordro / finans verileri gözetim kapsamı dışında — franchise'ın özel bilgisi.</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ============================================================================
 // Modal (ortak)
 // ============================================================================
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -636,6 +768,338 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     </div>
   );
 }
+
+// ============================================================================
+// Personel — Fourth modeli (sube filtresi + secili sube personeli)
+// ============================================================================
+type StaffBranch = { id: string; name: string; address?: string; kind: "brand" | "franchise" };
+type Employee = {
+  id: string; first_name: string; last_name: string; email?: string; phone?: string;
+  position?: string; department?: string; contract_type?: string; is_active: boolean;
+  shift_status?: string;
+};
+
+const CONTRACT_LABEL: Record<string, string> = {
+  full_time: "Tam Zamanlı", part_time: "Yarı Zamanlı", seasonal: "Sezonluk", contract: "Sözleşmeli",
+};
+const SHIFT_META: Record<string, { label: string; dot: string; fg: string; bg: string }> = {
+  mesaide:     { label: "Mesaide",          dot: "#1FA85A", fg: "#15803D", bg: "#EEF8F2" },
+  not_started: { label: "Başlamadı",        dot: "#A6A29B", fg: "#6B6862", bg: "#F2F1ED" },
+  ended:       { label: "Vardiya bitti",    dot: "#D4D0C8", fg: "#8A867F", bg: "#F4F3F0" },
+  leave:       { label: "İzinli",           dot: "#E0A82E", fg: "#9C8A4E", bg: "#FBF6E9" },
+};
+
+function StaffPage({ token, companyId }: { token: string; companyId: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const [branches, setBranches] = useState<StaffBranch[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<StaffBranch | null>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [empLoading, setEmpLoading] = useState(false);
+
+  // ekleme modal
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time" });
+  const [formErr, setFormErr] = useState("");
+  // detay modal
+  const [detail, setDetail] = useState<Employee | null>(null);
+  const [edit, setEdit] = useState({ first_name: "", last_name: "", phone: "", position: "", department: "" });
+  const [editing, setEditing] = useState(false);
+  const [removeMode, setRemoveMode] = useState(false);
+  const [termPw, setTermPw] = useState("");
+  const [msg, setMsg] = useState("");
+
+  // helper: bir company'nin ilk branch'ini bul
+  const firstBranchOf = async (cid: string): Promise<{ id: string; name: string; address?: string } | null> => {
+    try {
+      const r = await axios.get(`${API_URL}/companies/${cid}/branches`, { headers });
+      return r.data.length ? r.data[0] : null;
+    } catch { return null; }
+  };
+
+  const loadBranches = async () => {
+    const list: StaffBranch[] = [];
+    // 1) kendi subeler
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/branches`, { headers });
+      r.data.forEach((b: any) => list.push({ id: b.id, name: b.name, address: b.address, kind: "brand" }));
+    } catch {}
+    // 2) franchise'lar (her biri ayri company → ilk branch'ini al)
+    try {
+      const r = await axios.get(`${API_URL}/oversight/subs`, { headers });
+      const fr = r.data.filter((s: any) => s.link_type === "franchise");
+      await Promise.all(fr.map(async (f: any) => {
+        const b = await firstBranchOf(f.id);
+        if (b) list.push({ id: b.id, name: f.name, address: b.address || f.address, kind: "franchise" });
+      }));
+    } catch {}
+    setBranches(list);
+    // personel sayilari
+    const c: Record<string, number> = {};
+    await Promise.all(list.map(async (b) => {
+      try { const r = await axios.get(`${API_URL}/employees/branch/${b.id}`, { headers }); c[b.id] = r.data.length; }
+      catch { c[b.id] = 0; }
+    }));
+    setCounts(c);
+    setLoading(false);
+  };
+
+  const loadEmployees = async (branchId: string) => {
+    setEmpLoading(true);
+    try { const r = await axios.get(`${API_URL}/employees/branch/${branchId}`, { headers }); setEmployees(r.data); }
+    catch { setEmployees([]); }
+    setEmpLoading(false);
+  };
+
+  useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
+
+  const selectBranch = (b: StaffBranch) => { setSelected(b); loadEmployees(b.id); };
+
+  const totalStaff = Object.values(counts).reduce((a, b) => a + b, 0);
+
+  const addEmployee = async () => {
+    setFormErr("");
+    if (!form.first_name || !form.last_name) { setFormErr("Ad ve soyad zorunlu."); return; }
+    if (!selected) return;
+    try {
+      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId, branch_id: selected.id };
+      if (form.email) payload.email = form.email;
+      if (form.phone) payload.phone = form.phone;
+      if (form.position) payload.position = form.position;
+      if (form.department) payload.department = form.department;
+      await axios.post(`${API_URL}/employees`, payload, { headers });
+      setShowForm(false);
+      setForm({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time" });
+      loadEmployees(selected.id); loadBranches();
+    } catch (e: any) {
+      const d = e.response?.data?.detail;
+      setFormErr(typeof d === "string" ? d : (Array.isArray(d) ? d.map((x: any) => x.msg).join(", ") : "Personel eklenemedi."));
+    }
+  };
+
+  const openDetail = (em: Employee) => {
+    setDetail(em);
+    setEdit({ first_name: em.first_name || "", last_name: em.last_name || "", phone: em.phone || "", position: em.position || "", department: em.department || "" });
+    setEditing(false); setRemoveMode(false); setMsg("");
+  };
+  const saveEdit = async () => {
+    setMsg("");
+    try { await axios.put(`${API_URL}/employees/${detail!.id}`, edit, { headers }); setEditing(false); if (selected) loadEmployees(selected.id); setDetail({ ...detail!, ...edit }); }
+    catch (e: any) { setMsg(e.response?.data?.detail || "Güncellenemedi."); }
+  };
+  const terminate = async () => {
+    setMsg("");
+    if (!termPw) { setMsg("Onaylamak için şifren zorunlu."); return; }
+    try {
+      await axios.delete(`${API_URL}/employees/${detail!.id}/terminate`, { headers, data: { admin_password: termPw } });
+      setDetail(null); setTermPw(""); if (selected) loadEmployees(selected.id); loadBranches();
+    } catch (e: any) {
+      const d = e.response?.data?.detail;
+      setMsg(typeof d === "string" ? d : (Array.isArray(d) ? d.map((x: any) => x.msg).join(", ") : "İşten çıkarılamadı."));
+    }
+  };
+
+  const isFranchise = selected?.kind === "franchise";
+  const greenBtn = { fontSize: 12, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 } as const;
+  const softBtn = { fontSize: 12, fontWeight: 500, color: C.greenDark, background: C.greenSoft, border: "none", padding: "8px 12px", borderRadius: 8, cursor: "pointer" } as const;
+  const inputStyle = { width: "100%", padding: "9px 11px", border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" as const };
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: C.textFaint, display: "block", marginBottom: 5 };
+
+  const branchActive = employees.filter((e) => e.is_active).length;
+
+  return (
+    <>
+      <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 3 }}>Personel</div>
+      <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20 }}>Tüm şubelerinin personeli. Bir şube seç, detayına in.</div>
+
+      {/* Ozet kartlar */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 5 }}>Toplam Personel</div>
+          <div style={{ fontSize: 21, fontWeight: 600 }}>{loading ? "—" : totalStaff}</div>
+        </div>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 5 }}>Şube Sayısı</div>
+          <div style={{ fontSize: 21, fontWeight: 600, color: C.greenDark }}>{loading ? "—" : branches.length}</div>
+        </div>
+        <div style={{ background: C.ink, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: "#9DE8BE", marginBottom: 5 }}>Bugün mesaide</div>
+          <div style={{ fontSize: 21, fontWeight: 600, color: "#fff" }}>—</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 18 }}>
+        {/* SOL — sube filtresi */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Şubeler</div>
+          {loading ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+          ) : branches.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+              <i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Henüz şube yok.</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {branches.map((b) => {
+                const isSel = selected?.id === b.id;
+                const cnt = counts[b.id] ?? 0;
+                const fr = b.kind === "franchise";
+                return (
+                  <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <span style={{ fontSize: 13, fontWeight: isSel ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.name}</span>
+                      <span style={{ fontSize: 9, color: fr ? C.franchise : C.greenDark, background: fr ? C.franchiseSoft : C.greenSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{fr ? "Franchise" : "Markaya Ait"}</span>
+                    </div>
+                    <span style={{ fontSize: 12, color: isSel ? C.greenDark : C.textFaint, fontWeight: isSel ? 600 : 400, flexShrink: 0, marginLeft: 6 }}>{cnt}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* SAG — secili sube personeli */}
+        <div>
+          {!selected ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
+              <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Personeli görmek için bir şube seçin.</span>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.name} — Personel ({employees.length})</span>
+                {!isFranchise ? (
+                  <button style={greenBtn} onClick={() => { setShowForm(true); setFormErr(""); }}><i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />Personel Ekle</button>
+                ) : (
+                  <span style={{ fontSize: 10.5, color: C.franchise, background: C.franchiseSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-eye" style={{ fontSize: 13 }} aria-hidden="true" />Gözetim (salt okunur)</span>
+                )}
+              </div>
+
+              {/* durum lejant */}
+              <div style={{ display: "flex", gap: 14, marginBottom: 12, flexWrap: "wrap" }}>
+                {Object.values(SHIFT_META).map((m) => (
+                  <span key={m.label} style={{ fontSize: 10.5, color: C.textMuted, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.dot }} />{m.label}
+                  </span>
+                ))}
+              </div>
+
+              {empLoading ? (
+                <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+              ) : employees.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+                  <i className="ti ti-user-off" style={{ fontSize: 22 }} aria-hidden="true" />
+                  <span style={{ fontSize: 12.5 }}>Bu şubede henüz personel yok.</span>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {employees.map((em) => {
+                    const sm = SHIFT_META[em.shift_status || "not_started"] || SHIFT_META.not_started;
+                    const initials = (em.first_name?.[0] || "") + (em.last_name?.[0] || "");
+                    return (
+                      <div key={em.id} onClick={() => openDetail(em)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "#fff", flexShrink: 0 }}>{initials}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{em.first_name} {em.last_name}</div>
+                          <div style={{ fontSize: 11, color: C.textFaint }}>{[em.position, em.department].filter(Boolean).join(" · ") || "—"}</div>
+                        </div>
+                        {em.contract_type && <span style={{ fontSize: 10, color: C.textMuted, background: C.neutralBg, padding: "2px 8px", borderRadius: 10, flexShrink: 0 }}>{CONTRACT_LABEL[em.contract_type] || em.contract_type}</span>}
+                        <span style={{ fontSize: 10, color: sm.fg, background: sm.bg, padding: "3px 9px", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: sm.dot }} />{sm.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Modal: Personel Ekle */}
+      {showForm && selected && (
+        <Modal title={`Personel Ekle — ${selected.name}`} onClose={() => setShowForm(false)}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Ad *</label><input style={inputStyle} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Soyad *</label><input style={inputStyle} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /></div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="Barista" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Servis" /></div>
+          </div>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Sözleşme Tipi</label>
+            <select style={inputStyle} value={form.contract_type} onChange={(e) => setForm({ ...form, contract_type: e.target.value })}>
+              <option value="full_time">Tam Zamanlı</option>
+              <option value="part_time">Yarı Zamanlı</option>
+              <option value="seasonal">Sezonluk</option>
+              <option value="contract">Sözleşmeli</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>E-posta</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Telefon</label><input style={inputStyle} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+          </div>
+          {formErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {formErr}</div>}
+          <button style={{ ...greenBtn, width: "100%", justifyContent: "center", padding: "11px" }} onClick={addEmployee}>Personel Ekle</button>
+        </Modal>
+      )}
+
+      {/* Modal: Personel Detay */}
+      {detail && (
+        <Modal title="Personel Detayı" onClose={() => setDetail(null)}>
+          {!editing ? (
+            <div style={{ background: C.surface, borderRadius: 10, border: `1px solid ${C.border}`, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+              <div><span style={{ fontSize: 11, color: C.textFaint }}>Ad Soyad</span><div style={{ fontSize: 14, fontWeight: 600 }}>{detail.first_name} {detail.last_name}</div></div>
+              <div><span style={{ fontSize: 11, color: C.textFaint }}>Pozisyon / Departman</span><div style={{ fontSize: 14 }}>{[detail.position, detail.department].filter(Boolean).join(" · ") || "—"}</div></div>
+              <div><span style={{ fontSize: 11, color: C.textFaint }}>İletişim</span><div style={{ fontSize: 14 }}>{detail.email || "—"}{detail.phone ? ` · ${detail.phone}` : ""}</div></div>
+              <div><span style={{ fontSize: 11, color: C.textFaint }}>Sözleşme</span><div style={{ fontSize: 14 }}>{detail.contract_type ? (CONTRACT_LABEL[detail.contract_type] || detail.contract_type) : "—"}</div></div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 }}>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Ad</label><input style={inputStyle} value={edit.first_name} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Soyad</label><input style={inputStyle} value={edit.last_name} onChange={(e) => setEdit({ ...edit, last_name: e.target.value })} /></div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={edit.position} onChange={(e) => setEdit({ ...edit, position: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={edit.department} onChange={(e) => setEdit({ ...edit, department: e.target.value })} /></div>
+              </div>
+              <div><label style={labelStyle}>Telefon</label><input style={inputStyle} value={edit.phone} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></div>
+            </div>
+          )}
+
+          {removeMode && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px", background: C.dangerBg, borderRadius: 10, border: `1px solid ${C.dangerBorder}`, marginBottom: 12 }}>
+              <div style={{ fontSize: 12.5, color: C.dangerInk }}>Bu personeli işten çıkarmak için şifrenle onayla:</div>
+              <input style={inputStyle} type="password" value={termPw} onChange={(e) => setTermPw(e.target.value)} placeholder="Senin (owner) şifren" />
+              <button style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: C.dangerInk, border: "none", padding: "10px", borderRadius: 8, cursor: "pointer" }} onClick={terminate}>İşten Çıkarmayı Onayla</button>
+            </div>
+          )}
+          {msg && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {msg}</div>}
+
+          {!isFranchise && (
+            <div style={{ display: "flex", gap: 8 }}>
+              {!editing ? (
+                <>
+                  <button style={{ ...greenBtn, flex: 1, justifyContent: "center", padding: "9px" }} onClick={() => { setEditing(true); setRemoveMode(false); setMsg(""); }}>Düzenle</button>
+                  <button style={{ fontSize: 12, fontWeight: 600, color: C.dangerInk, background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, padding: "9px 14px", borderRadius: 8, cursor: "pointer" }} onClick={() => { setRemoveMode(!removeMode); setTermPw(""); setMsg(""); }}>İşten Çıkar</button>
+                </>
+              ) : (
+                <>
+                  <button style={{ ...greenBtn, flex: 1, justifyContent: "center", padding: "9px" }} onClick={saveEdit}>Kaydet</button>
+                  <button style={{ ...softBtn, flex: 1 }} onClick={() => setEditing(false)}>İptal</button>
+                </>
+              )}
+            </div>
+          )}
+        </Modal>
+      )}
+    </>
+  );
+}
+
 
 // ============================================================================
 // Placeholder

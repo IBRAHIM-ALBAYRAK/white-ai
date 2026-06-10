@@ -25,6 +25,8 @@ from app.core.deps import require_role, is_franchise_company, get_current_user
 from app.modules.auth.models import User, UserRole
 from app.modules.company.models import Company, OversightLink, Branch
 from app.modules.employees.models import Employee
+from app.modules.inventory.models import Product
+from app.modules.company.models import Branch as BranchModel
 from sqlalchemy import func
 from app.modules.employees.models import Employee
 from app.core.deps import get_current_user
@@ -195,4 +197,51 @@ async def brand_overview(
         "on_duty": 0,        # TODO: timeclock'tan beslenecek
         "alerts": [],        # TODO: stok/izin/atama uyarilari
         "busy_branches": [], # TODO: sube bazli personel dagilimi
+    }
+
+
+@router.get("/franchises/{franchise_id}/summary")
+async def franchise_summary(
+    franchise_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(owner_only),
+):
+    """Tek franchise icin gozetim ozeti: personel, mesaide, kritik stok.
+    Bordro/finans KAPSAM DISI (payroll oversight kurali).
+    Sadece bu markaya link_type='franchise' ile bagli franchise'lar gorulebilir."""
+    brand_id = current_user.company_id
+    link = (await db.execute(
+        select(OversightLink).where(
+            OversightLink.brand_company_id == brand_id,
+            OversightLink.sub_company_id == franchise_id,
+            OversightLink.link_type == "franchise",
+        )
+    )).scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu franchise gozetiminizde degil.")
+
+    staff_count = (await db.execute(
+        select(func.count()).select_from(Employee)
+        .where(Employee.company_id == franchise_id, Employee.is_active == True)
+    )).scalar() or 0
+
+    branch_ids = (await db.execute(
+        select(BranchModel.id).where(BranchModel.company_id == franchise_id)
+    )).scalars().all()
+
+    critical_stock = 0
+    if branch_ids:
+        critical_stock = (await db.execute(
+            select(func.count()).select_from(Product)
+            .where(
+                Product.branch_id.in_(branch_ids),
+                Product.is_active == True,
+                Product.current_stock < Product.min_stock_level,
+            )
+        )).scalar() or 0
+
+    return {
+        "staff": staff_count,
+        "on_duty": 0,            # TODO: timeclock
+        "critical_stock": critical_stock,
     }
