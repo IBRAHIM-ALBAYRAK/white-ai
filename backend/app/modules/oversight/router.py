@@ -21,9 +21,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.deps import require_role, is_franchise_company
+from app.core.deps import require_role, is_franchise_company, get_current_user
 from app.modules.auth.models import User, UserRole
-from app.modules.company.models import Company, OversightLink
+from app.modules.company.models import Company, OversightLink, Branch
+from app.modules.employees.models import Employee
+from sqlalchemy import func
+from app.modules.employees.models import Employee
+from app.core.deps import get_current_user
 from app.modules.company.schemas import CompanyCreateSchema
 from app.modules.company.service import company_service
 from app.modules.oversight.schemas import SubCreateSchema, SubResponseSchema, BrandCreateSchema, BrandCreateResponseSchema
@@ -160,3 +164,35 @@ async def list_subs(
         )
         for (c, lt) in rows
     ]
+
+
+@router.get("/overview")
+async def brand_overview(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(owner_only),
+):
+    """Marka geneli ozet: sube, franchise, personel sayilari. Genel Bakis sayfasi icin."""
+    brand_id = current_user.company_id
+
+    branches_count = (await db.execute(
+        select(func.count()).select_from(Branch).where(Branch.company_id == brand_id)
+    )).scalar() or 0
+
+    franchises_count = (await db.execute(
+        select(func.count()).select_from(OversightLink)
+        .where(OversightLink.brand_company_id == brand_id, OversightLink.link_type == "franchise")
+    )).scalar() or 0
+
+    staff_count = (await db.execute(
+        select(func.count()).select_from(Employee)
+        .where(Employee.company_id == brand_id, Employee.is_active == True)
+    )).scalar() or 0
+
+    return {
+        "branches": branches_count,
+        "franchises": franchises_count,
+        "staff": staff_count,
+        "on_duty": 0,        # TODO: timeclock'tan beslenecek
+        "alerts": [],        # TODO: stok/izin/atama uyarilari
+        "busy_branches": [], # TODO: sube bazli personel dagilimi
+    }
