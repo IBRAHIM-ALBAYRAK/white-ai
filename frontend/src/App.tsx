@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import EmployeePortal from "./EmployeePortal";
 import { FranchisesPage } from "./FranchisesPage";
+import BrandPanel from "./BrandPanel";
 
 
 const API_URL = "http://127.0.0.1:8000/api/v1";
@@ -558,6 +559,13 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
   const [managerError, setManagerError] = useState("");
   const [managerSaving, setManagerSaving] = useState(false);
   const [managers, setManagers] = useState<any[]>([]);
+  const [detailManager, setDetailManager] = useState<any>(null);
+  const [mgrEdit, setMgrEdit] = useState({ first_name:"", last_name:"", phone:"" });
+  const [mgrEditing, setMgrEditing] = useState(false);
+  const [mgrAction, setMgrAction] = useState<"" | "reset" | "remove">("");
+  const [mgrAdminPw, setMgrAdminPw] = useState("");
+  const [mgrNewPw, setMgrNewPw] = useState("");
+  const [mgrMsg, setMgrMsg] = useState("");
   const [employeeForm, setEmployeeForm] = useState({
     first_name:"", last_name:"", email:"", phone:"",
     position:"", department:"", contract_type:"full_time",
@@ -602,6 +610,32 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
   const loadManagers = async (branchId: string) => {
     try { const res = await axios.get(`${API_URL}/users/branch/${branchId}`, { headers }); setManagers(res.data.filter((u: any) => u.role === "manager")); }
     catch { setManagers([]); }
+  };
+  const saveMgrEdit = async () => {
+    setMgrMsg("");
+    try {
+      await axios.put(`${API_URL}/users/${detailManager.id}`, mgrEdit, { headers });
+      setMgrEditing(false);
+      if (selectedBranch) loadManagers(selectedBranch.id);
+      setDetailManager({ ...detailManager, ...mgrEdit });
+    } catch (e: any) { setMgrMsg(e.response?.data?.detail || "Güncellenemedi."); }
+  };
+  const resetMgrPw = async () => {
+    setMgrMsg("");
+    if (!mgrAdminPw || !mgrNewPw) { setMgrMsg("Şifren ve yeni şifre zorunlu."); return; }
+    try {
+      await axios.put(`${API_URL}/users/${detailManager.id}/reset-password`, { admin_password: mgrAdminPw, new_password: mgrNewPw }, { headers });
+      setMgrAction(""); setMgrAdminPw(""); setMgrNewPw(""); setMgrMsg("Şifre sıfırlandı.");
+    } catch (e: any) { setMgrMsg(e.response?.data?.detail || "Şifre sıfırlanamadı."); }
+  };
+  const removeMgr = async () => {
+    setMgrMsg("");
+    if (!mgrAdminPw) { setMgrMsg("Şifren zorunlu."); return; }
+    try {
+      await axios.delete(`${API_URL}/users/${detailManager.id}/verified`, { headers, data: { admin_password: mgrAdminPw } });
+      setDetailManager(null); setMgrAdminPw("");
+      if (selectedBranch) loadManagers(selectedBranch.id);
+    } catch (e: any) { setMgrMsg(e.response?.data?.detail || "Kaldırılamadı."); }
   };
   const assignManager = async () => {
     setManagerError("");
@@ -954,9 +988,67 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
               </button>
             </div>
           </div>
+          </div>
+      )}
+      {detailManager && (
+        <div className="app-modal-overlay">
+          <div className="app-modal">
+            <div className="app-modal-header">
+              <span className="app-modal-title">Yönetici Detayı</span>
+              <button className="app-modal-close" onClick={() => setDetailManager(null)}>✕</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              {!mgrEditing ? (
+                <div style={{padding:"14px 16px",background:"#f8f7f4",borderRadius:10,border:"1px solid #e5e4e0",display:"flex",flexDirection:"column",gap:8}}>
+                  <div><span style={{fontSize:12,color:"#9b9b93"}}>Ad Soyad</span><div style={{fontSize:14,fontWeight:600}}>{detailManager.first_name} {detailManager.last_name}</div></div>
+                  <div><span style={{fontSize:12,color:"#9b9b93"}}>E-posta (giriş)</span><div style={{fontSize:14}}>{detailManager.email}</div></div>
+                  <div><span style={{fontSize:12,color:"#9b9b93"}}>Telefon</span><div style={{fontSize:14}}>{detailManager.phone || "—"}</div></div>
+                  <div><span style={{fontSize:12,color:"#9b9b93"}}>Durum</span><div><span className={`badge ${detailManager.is_active ? "badge-grey" : "badge-blue"}`}>{detailManager.is_active ? "Aktif" : "Pasif"}</span></div></div>
+                </div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  <div style={{display:"flex",gap:12}}>
+                    <div style={{flex:1}}><label className="app-label">Ad</label><input value={mgrEdit.first_name} onChange={(e)=>setMgrEdit({...mgrEdit,first_name:e.target.value})} className="app-input" /></div>
+                    <div style={{flex:1}}><label className="app-label">Soyad</label><input value={mgrEdit.last_name} onChange={(e)=>setMgrEdit({...mgrEdit,last_name:e.target.value})} className="app-input" /></div>
+                  </div>
+                  <div><label className="app-label">Telefon</label><input value={mgrEdit.phone} onChange={(e)=>setMgrEdit({...mgrEdit,phone:e.target.value})} className="app-input" /></div>
+                </div>
+              )}
+              {mgrAction === "reset" && (
+                <div style={{display:"flex",flexDirection:"column",gap:10,padding:"12px 14px",background:"#fff7ed",borderRadius:10,border:"1px solid #fed7aa"}}>
+                  <div style={{fontSize:13,fontWeight:600}}>Şifre Sıfırla</div>
+                  <input type="password" value={mgrAdminPw} onChange={(e)=>setMgrAdminPw(e.target.value)} className="app-input" placeholder="Senin (owner) şifren" />
+                  <input value={mgrNewPw} onChange={(e)=>setMgrNewPw(e.target.value)} className="app-input" placeholder="Yöneticinin yeni şifresi" />
+                  <button className="btn-primary" onClick={resetMgrPw} style={{justifyContent:"center",padding:"10px"}}>Şifreyi Sıfırla</button>
+                </div>
+              )}
+              {mgrAction === "remove" && (
+                <div style={{display:"flex",flexDirection:"column",gap:10,padding:"12px 14px",background:"#fef2f2",borderRadius:10,border:"1px solid #fecaca"}}>
+                  <div style={{fontSize:13,fontWeight:600,color:"#dc2626"}}>Yöneticiyi Kaldır</div>
+                  <input type="password" value={mgrAdminPw} onChange={(e)=>setMgrAdminPw(e.target.value)} className="app-input" placeholder="Onaylamak için senin şifren" />
+                  <button className="btn-danger" onClick={removeMgr} style={{justifyContent:"center",padding:"10px"}}>Kaldırmayı Onayla</button>
+                </div>
+              )}
+              {mgrMsg && <div className="inline-error">⚠ {mgrMsg}</div>}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {!mgrEditing ? (
+                  <>
+                    <button className="btn-primary" onClick={()=>{setMgrEditing(true);setMgrAction("");setMgrMsg("");}} style={{flex:1,justifyContent:"center",padding:"10px"}}>Düzenle</button>
+                    <button className="btn-secondary" onClick={()=>{setMgrAction(mgrAction==="reset"?"":"reset");setMgrMsg("");setMgrAdminPw("");setMgrNewPw("");}} style={{flex:1}}>Şifre Sıfırla</button>
+                    <button className="btn-danger" onClick={()=>{setMgrAction(mgrAction==="remove"?"":"remove");setMgrMsg("");setMgrAdminPw("");}} style={{flex:1,padding:"10px"}}>Kaldır</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn-primary" onClick={saveMgrEdit} style={{flex:1,justifyContent:"center",padding:"10px"}}>Kaydet</button>
+                    <button className="btn-secondary" onClick={()=>setMgrEditing(false)} style={{flex:1}}>İptal</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
-{branchAction && (
+  {branchAction && (
         <div className="app-modal-overlay">
           <div className="app-modal">
             <div className="app-modal-header">
@@ -1067,10 +1159,11 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
                 <div key={c.id} className={`list-item ${selectedCompany?.id===c.id?"selected":""}`} style={{cursor:"pointer"}} onClick={() => selectCompany(c)}>
                   <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div className="list-item-title">{c.name}</div>
+                    <div className="list-item-title">{c.name}</div>
+                      {c.legal_name && <div style={{fontSize:12,color:"#6b6b63"}}>{c.legal_name}</div>}
                       <div className="list-item-sub">{c.email}</div>
                     </div>
-                    {!isBrand && <button className="btn-danger" onClick={(ev) => { ev.stopPropagation(); setCompanyAction({ company: c, mode: "suspend" }); setCompanyActionError(""); setCompanyAdminPassword(""); }} style={{flexShrink:0,marginLeft:8,padding:"4px 10px",fontSize:11}}>
+                    {!isBrand && <button className="btn-danger" onClick={(ev) => { ev.stopPropagation(); setCompanyAction({ company: c, mode: "suspend" });setCompanyActionError(""); setCompanyAdminPassword(""); }} style={{flexShrink:0,marginLeft:8,padding:"4px 10px",fontSize:11}}>
                       Askıya Al
                     </button>}
                   </div>
@@ -1191,7 +1284,7 @@ function CompaniesPage({ token, isBrand }: { token: string; isBrand?: boolean })
                 managers.length === 0 ? <div className="empty-state"><p className="empty-state-text">Henüz yönetici atanmamış.</p></div>
                 : <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {managers.map(m => (
-                      <div key={m.id} className="app-card" style={{padding:"14px 16px"}}>
+                      <div key={m.id} className="app-card" style={{padding:"14px 16px",cursor:"pointer"}} onClick={() => { setDetailManager(m); setMgrEdit({ first_name:m.first_name||"", last_name:m.last_name||"", phone:m.phone||"" }); setMgrEditing(false); setMgrAction(""); setMgrAdminPw(""); setMgrNewPw(""); setMgrMsg(""); }}>
                         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
                           <div style={{flex:1,minWidth:0}}>
                             <div className="list-item-title">{m.first_name} {m.last_name}</div>
@@ -2074,16 +2167,22 @@ function MainApp({ user, token, onLogout }: { user: User; token: string; onLogou
   const [page, setPage] = useState("dashboard");
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [companyType, setCompanyType] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
 
   // Kullanıcının company_type'ını çek (brand/sub/standalone) → panel dallanması için.
   useEffect(() => {
     if (!user.company_id) return;
     axios.get(`${API_URL}/companies/${user.company_id}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => setCompanyType(res.data.company_type))
+      .then(res => { setCompanyType(res.data.company_type); setCompanyName(res.data.name); })
       .catch(() => setCompanyType(null));
   }, [user.company_id, token]);
 
   const isBrand = companyType === "brand" && user.role === "owner";
+
+  // Marka sahibi → yeni Marka Paneli (Panel 2). MainApp'in geri kalani calismaz.
+  if (isBrand) {
+    return <BrandPanel user={user} token={token} onLogout={onLogout} companyName={companyName} />;
+  }
 
   const pageTitle: Record<string,string> = {
     dashboard:"Dashboard", companies:"Companies",
@@ -2112,7 +2211,14 @@ function MainApp({ user, token, onLogout }: { user: User; token: string; onLogou
       <Sidebar active={page} onNavigate={setPage} user={user} onLogout={onLogout} onChangePassword={() => setShowChangePassword(true)} items={isBrand ? [...navItems, { id: "franchises", label: "Franchise'larım", icon: "🔗" }] : navItems} />
         <div className="app-main">
           <div className="app-topbar">
-            <span className="app-topbar-title">{pageTitle[page]}</span>
+          {companyName ? (
+              <div style={{display:"flex",flexDirection:"column"}}>
+                <span className="app-topbar-title">{companyName}</span>
+                <span style={{fontSize:11,color:"#9b9b93",fontWeight:500}}>{pageTitle[page]}</span>
+              </div>
+            ) : (
+              <span className="app-topbar-title">{pageTitle[page]}</span>
+            )}
             <div className="app-topbar-right">
               <span style={{fontSize:13,color:"#9b9b93",fontWeight:500}}>{user.first_name} {user.last_name}</span>
               <div style={{width:30,height:30,borderRadius:"50%",background:"linear-gradient(135deg,#00c853,#00897b)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:"white",fontWeight:700}}>{user.first_name[0]}</div>
