@@ -33,6 +33,7 @@ from app.modules.users.schemas import (
     EmployeeCreateSchema,
     UserUpdateSchema,
     UserResponseSchema,
+    ResetPasswordSchema,
 )
 from app.modules.users.service import user_service
 
@@ -129,3 +130,21 @@ async def deactivate_user_verified(
         admin_password=data.admin_password,
     )
     return {"message": "User deactivated."}
+
+
+@router.put("/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: str,
+    data: ResetPasswordSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(admin_write),
+):
+    await _assert_user(db, current_user, user_id)
+    await user_service.reset_user_password(
+        db,
+        user_id=user_id,
+        admin_id=current_user.id,
+        admin_password=data.admin_password,
+        new_password=data.new_password,
+    )
+    return {"message": "Password reset."}
