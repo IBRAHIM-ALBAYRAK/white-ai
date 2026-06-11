@@ -4,7 +4,6 @@ import EmployeePortal from "./EmployeePortal";
 import { FranchisesPage } from "./FranchisesPage";
 import BrandPanel from "./BrandPanel";
 
-
 const API_URL = "http://127.0.0.1:8000/api/v1";
 
 type User = {

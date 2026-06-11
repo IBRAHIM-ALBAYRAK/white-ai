@@ -1175,11 +1175,11 @@ function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string;
 
   // ekleme modal
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time" });
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "" });
   const [formErr, setFormErr] = useState("");
   // detay modal
   const [detail, setDetail] = useState<Employee | null>(null);
-  const [edit, setEdit] = useState({ first_name: "", last_name: "", phone: "", position: "", department: "" });
+  const [edit, setEdit] = useState({ first_name: "", last_name: "", phone: "", position: "", department: "", base_salary: "", bank_iban: "" });
   const [editing, setEditing] = useState(false);
   const [removeMode, setRemoveMode] = useState(false);
   const [termPw, setTermPw] = useState("");
@@ -1251,9 +1251,11 @@ function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string;
       if (form.phone) payload.phone = form.phone;
       if (form.position) payload.position = form.position;
       if (form.department) payload.department = form.department;
+      if (form.base_salary) payload.base_salary = parseFloat(form.base_salary) || 0;
+      if (form.bank_iban) payload.bank_iban = form.bank_iban.trim();
       await axios.post(`${API_URL}/employees`, payload, { headers });
       setShowForm(false);
-      setForm({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time" });
+      setForm({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "" });
       loadEmployees(selected.id); loadBranches();
     } catch (e: any) {
       const d = e.response?.data?.detail;
@@ -1268,7 +1270,11 @@ function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string;
   };
   const saveEdit = async () => {
     setMsg("");
-    try { await axios.put(`${API_URL}/employees/${detail!.id}`, edit, { headers }); setEditing(false); if (selected) loadEmployees(selected.id); setDetail({ ...detail!, ...edit }); }
+    try {
+      const epayload: any = { first_name: edit.first_name, last_name: edit.last_name, phone: edit.phone, position: edit.position, department: edit.department, bank_iban: edit.bank_iban.trim() };
+      epayload.base_salary = edit.base_salary ? (parseFloat(edit.base_salary) || 0) : null;
+      await axios.put(`${API_URL}/employees/${detail!.id}`, epayload, { headers }); setEditing(false); if (selected) loadEmployees(selected.id); setDetail({ ...detail!, ...epayload });
+    }
     catch (e: any) { setMsg(e.response?.data?.detail || "Güncellenemedi."); }
   };
   const terminate = async () => {
@@ -1424,6 +1430,10 @@ function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string;
             <div style={{ flex: 1 }}><label style={labelStyle}>E-posta</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
             <div style={{ flex: 1 }}><label style={labelStyle}>Telefon</label><input style={inputStyle} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
           </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Brüt Maaş (₺/ay)</label><input style={inputStyle} type="number" value={form.base_salary} onChange={(e) => setForm({ ...form, base_salary: e.target.value })} placeholder="Bordro için" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>IBAN</label><input style={inputStyle} value={form.bank_iban} onChange={(e) => setForm({ ...form, bank_iban: e.target.value })} placeholder="TR.." /></div>
+          </div>
           {formErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {formErr}</div>}
           <button style={{ ...greenBtn, width: "100%", justifyContent: "center", padding: "11px" }} onClick={addEmployee}>Personel Ekle</button>
         </Modal>
@@ -1450,6 +1460,10 @@ function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string;
                 <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={edit.department} onChange={(e) => setEdit({ ...edit, department: e.target.value })} /></div>
               </div>
               <div><label style={labelStyle}>Telefon</label><input style={inputStyle} value={edit.phone} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Brüt Maaş (₺/ay)</label><input style={inputStyle} type="number" value={edit.base_salary} onChange={(e) => setEdit({ ...edit, base_salary: e.target.value })} placeholder="Bordro için" /></div>
+                <div style={{ flex: 1 }}><label style={labelStyle}>IBAN</label><input style={inputStyle} value={edit.bank_iban} onChange={(e) => setEdit({ ...edit, bank_iban: e.target.value })} placeholder="TR.." /></div>
+              </div>
             </div>
           )}
 
