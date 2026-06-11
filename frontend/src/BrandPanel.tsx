@@ -149,7 +149,8 @@ export default function BrandPanel({
           {page === "franchises" && <BranchesPage token={token} companyId={user.company_id || ""} goToBranch={goToBranch} />}
           {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "inventory" && <InventoryPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
-          {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && <Placeholder title={PAGE_TITLE[page]} />}
+          {page === "payroll" && <PayrollPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
+          {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && page !== "payroll" && <Placeholder title={PAGE_TITLE[page]} />}
         </div>
       </main>
     </div>
@@ -631,6 +632,296 @@ function CompanyPage({ token, companyId, brandName }: { token: string; companyId
   );
 }
 
+
+// ============================================================================
+// Bordro — donem bazli sube bordrosu. /payroll/branch + /payroll/run-branch
+// ============================================================================
+type PayBranch = { id: string; name: string; address?: string };
+type Payslip = {
+  id: string; employee_id: string; year: number; month: number; sgk_days: number;
+  full_monthly_gross: number; gross: number; sgk_base: number;
+  sgk_employee: number; unemployment_employee: number;
+  income_tax_base: number; cumulative_base_before: number; cumulative_base_after: number;
+  income_tax_gross: number; income_tax_exemption: number; income_tax_net: number;
+  stamp_tax_gross: number; stamp_tax_exemption: number; stamp_tax_net: number;
+  net_salary: number; sgk_employer: number; unemployment_employer: number; employer_cost: number;
+};
+type PayRow = {
+  employee_id: string; first_name: string; last_name: string;
+  position?: string | null; base_salary?: number | null; payslip?: Payslip | null;
+};
+const AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+const fmtTL2 = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function PayrollPage({ token, companyId, jumpBranch, clearJump }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [branches, setBranches] = useState<PayBranch[]>([]);
+  const [branchesLoaded, setBranchesLoaded] = useState(false);
+  const [counts, setCounts] = useState<Record<string, { total: number; done: number }>>({});
+  const [selected, setSelected] = useState<PayBranch | null>(null);
+  const [rows, setRows] = useState<PayRow[]>([]);
+  const [rowsLoading, setRowsLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [runErr, setRunErr] = useState("");
+  const [slip, setSlip] = useState<{ row: PayRow; p: Payslip } | null>(null);
+
+  const loadBranches = async () => {
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/branches?t=${Date.now()}`, { headers });
+      setBranches(r.data.map((b: any) => ({ id: b.id, name: b.name, address: b.address })));
+    } catch { setBranches([]); }
+    setBranchesLoaded(true);
+  };
+  useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
+
+  const loadCounts = async (y: number, m: number, list: PayBranch[]) => {
+    const c: Record<string, { total: number; done: number }> = {};
+    await Promise.all(list.map(async (b) => {
+      try {
+        const r = await axios.get(`${API_URL}/payroll/branch/${b.id}/${y}/${m}?t=${Date.now()}`, { headers });
+        c[b.id] = { total: r.data.length, done: r.data.filter((x: PayRow) => x.payslip).length };
+      } catch { c[b.id] = { total: 0, done: 0 }; }
+    }));
+    setCounts(c);
+  };
+  useEffect(() => { if (branchesLoaded && branches.length) loadCounts(year, month, branches); /* eslint-disable-next-line */ }, [branchesLoaded, branches.length, year, month]);
+
+  const loadRows = async (b: PayBranch, y: number, m: number) => {
+    setRowsLoading(true); setRunErr("");
+    try { const r = await axios.get(`${API_URL}/payroll/branch/${b.id}/${y}/${m}?t=${Date.now()}`, { headers }); setRows(r.data); }
+    catch { setRows([]); }
+    setRowsLoading(false);
+  };
+  const selectBranch = (b: PayBranch) => { setSelected(b); loadRows(b, year, month); };
+  useEffect(() => { if (selected) loadRows(selected, year, month); /* eslint-disable-next-line */ }, [year, month]);
+
+  useEffect(() => {
+    if (jumpBranch && branchesLoaded && branches.length) {
+      const t = branches.find((b) => b.id === jumpBranch);
+      if (t) selectBranch(t);
+      if (clearJump) clearJump();
+    }
+    /* eslint-disable-next-line */
+  }, [jumpBranch, branchesLoaded, branches.length]);
+
+  const prevMonth = () => { if (month === 1) { setMonth(12); setYear(year - 1); } else setMonth(month - 1); };
+  const nextMonth = () => {
+    const isCurrent = year === today.getFullYear() && month === today.getMonth() + 1;
+    if (isCurrent) return; // gelecek ay yok
+    if (month === 12) { setMonth(1); setYear(year + 1); } else setMonth(month + 1);
+  };
+  const atCurrent = year === today.getFullYear() && month === today.getMonth() + 1;
+
+  const runBranch = async () => {
+    if (!selected || running) return;
+    setRunning(true); setRunErr("");
+    try {
+      const r = await axios.post(`${API_URL}/payroll/run-branch`, { branch_id: selected.id, year, month }, { headers });
+      const fails = r.data.filter((x: any) => !x.ok);
+      if (fails.length) setRunErr(`${fails.length} çalışan hesaplanamadı (maaş tanımsız olabilir).`);
+      await loadRows(selected, year, month);
+      loadCounts(year, month, branches);
+    } catch (e: any) { const d = e.response?.data?.detail; setRunErr(typeof d === "string" ? d : "Dönem çalıştırılamadı."); }
+    setRunning(false);
+  };
+  const runOne = async (employee_id: string) => {
+    if (!selected) return;
+    setRunErr("");
+    try {
+      await axios.post(`${API_URL}/payroll/run-through`, { employee_id, year, month }, { headers });
+      await loadRows(selected, year, month);
+      loadCounts(year, month, branches);
+    } catch (e: any) { const d = e.response?.data?.detail; setRunErr(typeof d === "string" ? d : "Hesaplanamadı."); }
+  };
+
+  const done = rows.filter((r) => r.payslip);
+  const totGross = done.reduce((a, r) => a + (r.payslip!.gross), 0);
+  const totNet = done.reduce((a, r) => a + (r.payslip!.net_salary), 0);
+  const totCost = done.reduce((a, r) => a + (r.payslip!.employer_cost), 0);
+  const totState = totCost - totNet;
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>Bordro</div>
+          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>Dönem bordrosunu hesapla, fişleri incele. Yeniden çalıştırma düzeltmedir.</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", background: C.surface, border: "0.5px solid #E6E4DD", borderRadius: 10, overflow: "hidden" }}>
+            <button onClick={prevMonth} aria-label="Önceki ay" style={{ border: "none", background: "transparent", padding: "8px 11px", cursor: "pointer", color: C.textFaint, display: "flex" }}><i className="ti ti-chevron-left" style={{ fontSize: 15 }} aria-hidden="true" /></button>
+            <span style={{ fontSize: 13, fontWeight: 600, padding: "0 6px", minWidth: 110, textAlign: "center" }}>{AYLAR[month - 1]} {year}</span>
+            <button onClick={nextMonth} aria-label="Sonraki ay" style={{ border: "none", background: "transparent", padding: "8px 11px", cursor: atCurrent ? "not-allowed" : "pointer", color: atCurrent ? "#E0DDD6" : C.textFaint, display: "flex" }}><i className="ti ti-chevron-right" style={{ fontSize: 15 }} aria-hidden="true" /></button>
+          </div>
+          <button onClick={runBranch} disabled={!selected || running} style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", background: !selected || running ? "#8A867F" : C.ink, border: "none", padding: "9px 16px", borderRadius: 10, cursor: !selected || running ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7 }}>
+            <i className={`ti ${running ? "ti-loader-2" : "ti-bolt"}`} style={{ fontSize: 15, color: "#2EE06A" }} aria-hidden="true" />{running ? "Hesaplanıyor…" : "Dönemi Çalıştır"}
+          </button>
+        </div>
+      </div>
+      <div style={{ height: 14 }} />
+
+      <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.7fr", gap: 18 }}>
+        {/* SOL: markaya ait subeler */}
+        <div>
+          <div style={{ fontSize: 11, color: C.textHint, fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>Şubeler</div>
+          {!branchesLoaded ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+          ) : branches.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+              <i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Henüz şube yok.</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {branches.map((b) => {
+                const isSel = selected?.id === b.id;
+                const cnt = counts[b.id];
+                const pct = cnt && cnt.total > 0 ? Math.round((cnt.done / cnt.total) * 100) : 0;
+                const full = cnt && cnt.total > 0 && cnt.done === cnt.total;
+                return (
+                  <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `0.5px solid ${C.border}`, borderRadius: 13, padding: "13px 15px", cursor: "pointer" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{b.name}</div>
+                    <div style={{ height: 4, background: "#EFEFEC", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: full ? C.green : "#E0A82E", borderRadius: 3 }} />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 11, color: cnt && cnt.done > 0 ? C.greenDark : C.warnInk, fontWeight: 600 }}>{cnt ? (cnt.total === 0 ? "Personel yok" : `${cnt.done}/${cnt.total} hesaplandı`) : "—"}</span>
+                      <span style={{ fontSize: 11, color: C.textFaint }}>{cnt?.total ?? "—"} personel</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ marginTop: 12, display: "flex", alignItems: "flex-start", gap: 8, padding: "11px 13px", background: C.surface, borderRadius: 11 }}>
+            <i className="ti ti-shield-lock" style={{ fontSize: 15, color: C.franchise, marginTop: 1 }} aria-hidden="true" />
+            <span style={{ fontSize: 10.5, color: C.textFaint, lineHeight: 1.5 }}>Franchise bordroları işletmenin özelidir — bu ekranda yalnızca markaya ait şubeler yer alır.</span>
+          </div>
+        </div>
+
+        {/* SAG */}
+        <div>
+          {!selected ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
+              <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bordro için bir şube seçin.</span>
+            </div>
+          ) : (
+            <>
+              {/* hero */}
+              <div style={{ background: C.ink, borderRadius: 14, padding: "16px 19px", marginBottom: 13, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 10.5, color: "#7C7A75", marginBottom: 4 }}>{AYLAR[month - 1]} {year} · {selected.name} · İşveren Toplam Maliyeti</div>
+                  <div style={{ fontSize: 25, fontWeight: 600, color: "#fff", letterSpacing: "-0.02em" }}>{rowsLoading ? "—" : fmtTL2(totCost)}</div>
+                </div>
+                <div style={{ display: "flex", gap: 22, textAlign: "right" }}>
+                  <div><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{rowsLoading ? "—" : fmtTL2(totGross)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>toplam brüt</div></div>
+                  <div><div style={{ fontSize: 14, fontWeight: 600, color: "#2EE06A" }}>{rowsLoading ? "—" : fmtTL2(totNet)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>çalışana net</div></div>
+                  <div><div style={{ fontSize: 14, fontWeight: 600, color: "#E0A82E" }}>{rowsLoading ? "—" : fmtTL2(totState)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>devlete giden</div></div>
+                </div>
+              </div>
+
+              {runErr && <div style={{ fontSize: 12, color: C.warnInk, background: C.warnBg, border: `0.5px solid ${C.warnBorder}`, borderRadius: 9, padding: "8px 12px", marginBottom: 11 }}>⚠ {runErr}</div>}
+
+              {rowsLoading ? (
+                <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+              ) : rows.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+                  <i className="ti ti-users" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bu şubede aktif personel yok.</span>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.9fr 1fr 1fr 0.95fr 36px", gap: 10, padding: "0 15px 7px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    <span>çalışan</span><span style={{ textAlign: "right" }}>brüt</span><span style={{ textAlign: "right" }}>net</span><span style={{ textAlign: "center" }}>durum</span><span></span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                    {rows.map((r) => {
+                      const p = r.payslip;
+                      const noSalary = r.base_salary == null;
+                      const initials = (r.first_name?.[0] || "") + (r.last_name?.[0] || "");
+                      return (
+                        <div key={r.employee_id} onClick={() => { if (p) setSlip({ row: r, p }); }} style={{ background: C.bg, border: p ? `0.5px solid ${C.border}` : `0.5px dashed #E0DACE`, borderRadius: 11, padding: "11px 15px", cursor: p ? "pointer" : "default", display: "grid", gridTemplateColumns: "1.9fr 1fr 1fr 0.95fr 36px", gap: 10, alignItems: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+                            <div style={{ width: 32, height: 32, borderRadius: "50%", background: p ? C.greenSoft : C.neutralBg, color: p ? C.greenDark : C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, flexShrink: 0 }}>{initials}</div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 12.5, fontWeight: 600, color: p ? C.ink : C.textMuted }}>{r.first_name} {r.last_name}</div>
+                              <div style={{ fontSize: 10.5, color: C.textFaint }}>{r.position || "—"}{p ? ` · ${p.sgk_days} gün` : ""}</div>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 12.5, textAlign: "right", color: p ? "#3C3A36" : "#C9C5BD" }}>{p ? fmtTL2(p.gross) : "—"}</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, textAlign: "right", color: p ? C.greenDark : "#C9C5BD" }}>{p ? fmtTL2(p.net_salary) : "—"}</div>
+                          <div style={{ textAlign: "center" }}>
+                            {p ? (
+                              <span style={{ fontSize: 10, color: C.greenDark, background: C.greenSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><i className="ti ti-check" style={{ fontSize: 11 }} aria-hidden="true" />Hesaplandı</span>
+                            ) : noSalary ? (
+                              <span style={{ fontSize: 10, color: C.warnInk, background: C.warnBg, padding: "4px 10px", borderRadius: 12, fontWeight: 600 }}>Maaş Tanımsız</span>
+                            ) : (
+                              <span style={{ fontSize: 10, color: C.warnInk, background: C.warnBg, padding: "4px 10px", borderRadius: 12, fontWeight: 600 }}>Bekliyor</span>
+                            )}
+                          </div>
+                          {p ? (
+                            <i className="ti ti-chevron-right" style={{ fontSize: 15, color: "#D4D0C8", margin: "0 auto" }} aria-hidden="true" />
+                          ) : noSalary ? (
+                            <i className="ti ti-lock" style={{ fontSize: 14, color: C.textHint, margin: "0 auto" }} aria-hidden="true" />
+                          ) : (
+                            <button onClick={(e) => { e.stopPropagation(); runOne(r.employee_id); }} aria-label="Bordroyu çalıştır" style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: C.green, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}><i className="ti ti-player-play" style={{ fontSize: 13, color: "#fff" }} aria-hidden="true" /></button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* FIS MODALI */}
+      {slip && (
+        <Modal title={`${slip.row.first_name} ${slip.row.last_name} — ${AYLAR[slip.p.month - 1]} ${slip.p.year}`} onClose={() => setSlip(null)}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <span style={{ fontSize: 11.5, color: C.textFaint }}>{slip.row.position || "—"} · {selected?.name}</span>
+            <span style={{ fontSize: 10.5, color: C.textFaint }}>SGK {slip.p.sgk_days} gün</span>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 10, borderBottom: "0.5px solid #F0EEE8" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>Brüt Ücret</span>
+            <span style={{ fontSize: 13.5, fontWeight: 600 }}>{fmtTL2(slip.p.gross)}</span>
+          </div>
+
+          <div style={{ fontSize: 10, color: C.textHint, fontWeight: 600, margin: "11px 0 7px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Kesintiler</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: C.textMuted }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><span>SGK İşçi Payı</span><span>− {fmtTL2(slip.p.sgk_employee)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><span>İşsizlik Sigortası</span><span>− {fmtTL2(slip.p.unemployment_employee)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><span>Gelir Vergisi <span style={{ color: "#C9C5BD" }}>istisna sonrası</span></span><span>− {fmtTL2(slip.p.income_tax_net)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}><span>Damga Vergisi <span style={{ color: "#C9C5BD" }}>istisna sonrası</span></span><span>− {fmtTL2(slip.p.stamp_tax_net)}</span></div>
+          </div>
+
+          <div style={{ marginTop: 13, padding: "12px 15px", background: C.greenSoft, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: C.greenDark }}>NET MAAŞ</span>
+            <span style={{ fontSize: 18, fontWeight: 600, color: C.greenDark }}>{fmtTL2(slip.p.net_salary)}</span>
+          </div>
+
+          <div style={{ marginTop: 9, padding: "11px 15px", background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: 11 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: C.textMuted, marginBottom: 5 }}><span>SGK İşveren</span><span>{fmtTL2(slip.p.sgk_employer)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: C.textMuted, marginBottom: 8 }}><span>İşsizlik İşveren</span><span>{fmtTL2(slip.p.unemployment_employer)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: `0.5px solid ${C.border}` }}>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>İşveren Toplam Maliyeti</span>
+              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{fmtTL2(slip.p.employer_cost)}</span>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10, color: C.textHint }}>
+            <span>Kümülatif matrah {fmtTL2(slip.p.cumulative_base_before)} → {fmtTL2(slip.p.cumulative_base_after)}</span>
+            <span onClick={() => { runOne(slip.row.employee_id); setSlip(null); }} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", color: C.greenDark }}><i className="ti ti-rotate" style={{ fontSize: 11 }} aria-hidden="true" />Yeniden çalıştır</span>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
 
 // ============================================================================
 // Subeler — birlesik liste (markaya ait + franchise) + iki modlu kopru
