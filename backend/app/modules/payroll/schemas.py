@@ -38,3 +38,23 @@ class PayslipResponseSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
+
+
+class RunBranchSchema(BaseModel):
+    branch_id: str
+    year: int
+    month: int
+
+class EmployeePayrollRowSchema(BaseModel):
+    employee_id: str
+    first_name: str
+    last_name: str
+    position: str | None = None
+    base_salary: float | None = None
+    payslip: PayslipResponseSchema | None = None
+
+class RunBranchResultSchema(BaseModel):
+    employee_id: str
+    ok: bool
+    error: str | None = None
+    payslip: PayslipResponseSchema | None = None

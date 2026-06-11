@@ -69,3 +69,75 @@ async def get_year(
                 detail="You can only view your own payslips.",
             )
     return await payroll_service.get_year(db, employee_id, year)
+
+# ── Branch-level bulk endpoints (subenin donem bordrosu) ──
+from sqlalchemy import select
+from app.modules.employees.models import Employee
+from app.modules.company.models import Branch
+from app.modules.payroll.models import Payslip
+from app.modules.payroll.schemas import RunBranchSchema, EmployeePayrollRowSchema, RunBranchResultSchema
+
+
+async def _assert_own_branch(db: AsyncSession, current_user: User, branch_id: str) -> Branch:
+    """Bordro yalnizca markanin KENDI subeleri icin: franchise/oversight 403."""
+    branch = (await db.execute(select(Branch).where(Branch.id == branch_id))).scalar_one_or_none()
+    if branch is None:
+        raise HTTPException(status_code=404, detail="Branch not found.")
+    if current_user.role != UserRole.SUPERADMIN and branch.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Payroll is outside oversight scope.")
+    return branch
+
+
+@router.get("/branch/{branch_id}/{year}/{month}", response_model=list[EmployeePayrollRowSchema])
+async def get_branch_month(
+    branch_id: str, year: int, month: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(staff),
+):
+    await _assert_own_branch(db, current_user, branch_id)
+    emps = (await db.execute(
+        select(Employee).where(Employee.branch_id == branch_id, Employee.is_active == True).order_by(Employee.first_name)
+    )).scalars().all()
+    ids = [e.id for e in emps]
+    slips = {}
+    if ids:
+        rows = (await db.execute(
+            select(Payslip).where(Payslip.employee_id.in_(ids), Payslip.year == year, Payslip.month == month)
+        )).scalars().all()
+        slips = {p.employee_id: p for p in rows}
+    return [
+        EmployeePayrollRowSchema(
+            employee_id=e.id, first_name=e.first_name, last_name=e.last_name,
+            position=e.position, base_salary=e.base_salary,
+            payslip=slips.get(e.id),
+        )
+        for e in emps
+    ]
+
+
+@router.post("/run-branch", response_model=list[RunBranchResultSchema])
+async def run_branch(
+    data: RunBranchSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(staff),
+):
+    await _assert_own_branch(db, current_user, data.branch_id)
+    emps = (await db.execute(
+        select(Employee).where(Employee.branch_id == data.branch_id, Employee.is_active == True).order_by(Employee.first_name)
+    )).scalars().all()
+    emp_ids = [e.id for e in emps]  # rollback ORM objelerini expire eder — id'leri onceden kopyala
+    results: list[RunBranchResultSchema] = []
+    for eid in emp_ids:
+        try:
+            slips = await payroll_service.run_through(db, eid, data.year, data.month)
+            # commit de expire eder — schema'ya commit'ten ONCE cevir
+            last = PayslipResponseSchema.model_validate(slips[-1]) if slips else None
+            await db.commit()
+            results.append(RunBranchResultSchema(employee_id=eid, ok=True, payslip=last))
+        except HTTPException as ex:
+            await db.rollback()
+            results.append(RunBranchResultSchema(employee_id=eid, ok=False, error=str(ex.detail)))
+        except Exception:
+            await db.rollback()
+            results.append(RunBranchResultSchema(employee_id=eid, ok=False, error="Hesaplama hatasi."))
+    return results

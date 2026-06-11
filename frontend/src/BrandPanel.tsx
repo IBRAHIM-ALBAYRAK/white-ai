@@ -48,7 +48,8 @@ const NAV_ITEMS: { id: string; label: string; icon: string }[] = [
   { id: "franchises", label: "Şubeler", icon: "ti-building-store" },
   { id: "staff", label: "Personel", icon: "ti-users" },
   { id: "inventory", label: "Envanter", icon: "ti-box" },
-  { id: "payroll", label: "Bordro / Finans", icon: "ti-cash" },
+  { id: "payroll", label: "Bordro", icon: "ti-receipt" },
+  { id: "finance", label: "Finans", icon: "ti-cash" },
   { id: "reports", label: "Raporlar", icon: "ti-chart-bar" },
   { id: "announcements", label: "Duyurular", icon: "ti-bell" },
   { id: "settings", label: "Ayarlar", icon: "ti-settings" },
@@ -60,7 +61,8 @@ const PAGE_TITLE: Record<string, string> = {
   franchises: "Şubeler",
   staff: "Personel",
   inventory: "Envanter",
-  payroll: "Bordro / Finans",
+  payroll: "Bordro",
+  finance: "Finans",
   reports: "Raporlar",
   announcements: "Duyurular",
   settings: "Ayarlar",
@@ -792,7 +794,7 @@ function BranchesPage({ token, companyId, goToBranch }: { token: string; company
               <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                 <ShortcutRow icon="ti-users" label="Personel" hint={`${summary?.staff ?? 0} kişi`} target="staff" />
                 <ShortcutRow icon="ti-box" label="Envanter" target="inventory" />
-                <ShortcutRow icon="ti-cash" label="Finans" target="payroll" />
+                <ShortcutRow icon="ti-cash" label="Finans" target="finance" />
                 {!isFr && <ShortcutRow icon="ti-receipt" label="Bordro" target="payroll" />}
                 {isFr && <ShortcutRow icon="ti-receipt" label="Bordro" locked />}
               </div>
