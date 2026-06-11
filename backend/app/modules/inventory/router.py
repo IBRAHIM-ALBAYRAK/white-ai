@@ -23,7 +23,12 @@ from app.modules.inventory.schemas import (
     ProductCreateSchema, ProductUpdateSchema, ProductResponseSchema,
     StockMovementCreateSchema, StockMovementResponseSchema,
 )
-from app.modules.inventory.service import inventory_service
+from app.modules.inventory.service import inventory_service, warehouse_service
+from app.modules.inventory.schemas import (
+    WarehouseStockCreateSchema, WarehouseStockUpdateSchema,
+    WarehouseStockResponseSchema, DispatchCreateSchema, TransferResponseSchema,
+)
+from app.core.deps import get_current_user
  
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
  
@@ -110,3 +115,101 @@ async def list_movements(product_id: str, db: AsyncSession = Depends(get_db), cu
     await _assert_product(db, current_user, product_id)
     return await inventory_service.get_movements(db, product_id)
  
+
+
+# ============================================================================
+# MERKEZ DEPO + SEVK endpoint'leri
+# Sadece marka sahibi (owner) erisebilir — merkez depo markanin, manager degil.
+# router.py'ye eklenecek. Gerekli ek import'lar dosya basina da eklenecek:
+#   from app.modules.inventory.schemas import (
+#       WarehouseStockCreateSchema, WarehouseStockUpdateSchema,
+#       WarehouseStockResponseSchema, DispatchCreateSchema, TransferResponseSchema,
+#   )
+#   from app.modules.inventory.service import warehouse_service
+#   from app.core.deps import get_current_user
+# ============================================================================
+
+warehouse_owner = require_role(UserRole.SUPERADMIN, UserRole.OWNER)
+
+
+@router.post("/warehouse/items", response_model=WarehouseStockResponseSchema)
+async def create_warehouse_item(
+    data: WarehouseStockCreateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(warehouse_owner),
+):
+    """Merkez depoya yeni ürün ekle (markaya bağlı)."""
+    item = await warehouse_service.create_item(db, current_user.company_id, data)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+@router.get("/warehouse/items", response_model=list[WarehouseStockResponseSchema])
+async def list_warehouse_items(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(warehouse_owner),
+):
+    """Markanın merkez depo stoğunu listele."""
+    return await warehouse_service.list_items(db, current_user.company_id)
+
+
+@router.put("/warehouse/items/{item_id}", response_model=WarehouseStockResponseSchema)
+async def update_warehouse_item(
+    item_id: str,
+    data: WarehouseStockUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(warehouse_owner),
+):
+    """Merkez depo ürününü güncelle (fiyat, stok, min seviye)."""
+    item = await warehouse_service.get_item(db, item_id)
+    if item.company_id != current_user.company_id:
+        from app.core.exceptions import ForbiddenException
+        raise ForbiddenException("Bu ürün markanıza ait değil.")
+    updated = await warehouse_service.update_item(db, item_id, data)
+    await db.commit()
+    await db.refresh(updated)
+    return updated
+
+
+@router.delete("/warehouse/items/{item_id}")
+async def delete_warehouse_item(
+    item_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(warehouse_owner),
+):
+    """Merkez depo ürününü pasifleştir (soft delete)."""
+    item = await warehouse_service.get_item(db, item_id)
+    if item.company_id != current_user.company_id:
+        from app.core.exceptions import ForbiddenException
+        raise ForbiddenException("Bu ürün markanıza ait değil.")
+    await warehouse_service.delete_item(db, item_id)
+    await db.commit()
+    return {"message": "Merkez depo ürünü kaldırıldı."}
+
+
+@router.post("/warehouse/dispatch", response_model=TransferResponseSchema)
+async def dispatch_stock(
+    data: DispatchCreateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(warehouse_owner),
+):
+    """
+    Merkez depodan bir şubeye/franchise'a sevk et. Atomik:
+    merkez stok düşer, hedef şube stoğu artar, bedel kaydı oluşur.
+    """
+    transfer = await warehouse_service.dispatch(
+        db, current_user.company_id, current_user.id, data
+    )
+    await db.commit()
+    await db.refresh(transfer)
+    return transfer
+
+
+@router.get("/warehouse/transfers", response_model=list[TransferResponseSchema])
+async def list_transfers(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(warehouse_owner),
+):
+    """Markanın tüm sevkiyat kayıtları (en yeni önce)."""
+    return await warehouse_service.list_transfers(db, current_user.company_id)
