@@ -45,7 +45,7 @@ const C = {
 const NAV_ITEMS: { id: string; label: string; icon: string }[] = [
   { id: "overview", label: "Genel Bakış", icon: "ti-layout-dashboard" },
   { id: "company", label: "Şirketim", icon: "ti-building-store" },
-  { id: "franchises", label: "Franchise'larım", icon: "ti-link" },
+  { id: "franchises", label: "Şubeler", icon: "ti-building-store" },
   { id: "staff", label: "Personel", icon: "ti-users" },
   { id: "inventory", label: "Envanter", icon: "ti-box" },
   { id: "payroll", label: "Bordro / Finans", icon: "ti-cash" },
@@ -57,7 +57,7 @@ const NAV_ITEMS: { id: string; label: string; icon: string }[] = [
 const PAGE_TITLE: Record<string, string> = {
   overview: "Genel Bakış",
   company: "Şirketim",
-  franchises: "Franchise'larım",
+  franchises: "Şubeler",
   staff: "Personel",
   inventory: "Envanter",
   payroll: "Bordro / Finans",
@@ -78,6 +78,8 @@ export default function BrandPanel({
   companyName?: string | null;
 }) {
   const [page, setPage] = useState("overview");
+  const [jumpBranch, setJumpBranch] = useState<string | null>(null);
+  const goToBranch = (branchId: string, target: string) => { setJumpBranch(branchId); setPage(target); };
   const brandName = companyName || "Markam";
   const initials = (user.first_name?.[0] || "") + (user.last_name?.[0] || "");
 
@@ -142,9 +144,9 @@ export default function BrandPanel({
         <div style={{ padding: "24px 26px", overflow: "auto" }}>
           {page === "overview" && <OverviewPage firstName={user.first_name} token={token} />}
           {page === "company" && <CompanyPage token={token} companyId={user.company_id || ""} brandName={brandName} />}
-          {page === "franchises" && <FranchisePage token={token} />}
-          {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} />}
-          {page === "inventory" && <InventoryPage token={token} companyId={user.company_id || ""} />}
+          {page === "franchises" && <BranchesPage token={token} companyId={user.company_id || ""} goToBranch={goToBranch} />}
+          {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
+          {page === "inventory" && <InventoryPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && <Placeholder title={PAGE_TITLE[page]} />}
         </div>
       </main>
@@ -627,78 +629,127 @@ function CompanyPage({ token, companyId, brandName }: { token: string; companyId
   );
 }
 
-// ============================================================================
-// Franchise'larim — gozetim (read-only). /oversight/subs + /franchises/{id}/summary
-// ============================================================================
-type Franchise = { id: string; name: string; email: string; phone?: string; address?: string; is_active: boolean; link_type: string };
-type FranchiseSummary = { staff: number; on_duty: number; critical_stock: number };
 
-function FranchisePage({ token }: { token: string }) {
+// ============================================================================
+// Subeler — birlesik liste (markaya ait + franchise) + iki modlu kopru
+// ============================================================================
+type BItem = {
+  id: string;            // branch_id (drill-down hedefi)
+  companyId: string;     // sahip company (markaya ait=brand, franchise=ayri)
+  name: string;
+  legalName?: string;
+  address?: string;
+  email?: string;
+  kind: "brand" | "franchise";
+  isActive: boolean;
+};
+type BSummary = { staff: number; on_duty: number; critical_stock: number };
+
+function BranchesPage({ token, companyId, goToBranch }: { token: string; companyId: string; goToBranch: (branchId: string, target: string) => void }) {
   const headers = { Authorization: `Bearer ${token}` };
-  const [franchises, setFranchises] = useState<Franchise[]>([]);
+  const [items, setItems] = useState<BItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Franchise | null>(null);
-  const [summary, setSummary] = useState<FranchiseSummary | null>(null);
+  const [selected, setSelected] = useState<BItem | null>(null);
+  const [summary, setSummary] = useState<BSummary | null>(null);
   const [sumLoading, setSumLoading] = useState(false);
+  // yeni ekle modal
+  const [showAdd, setShowAdd] = useState(false);
+  const [addKind, setAddKind] = useState<"brand" | "franchise">("brand");
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await axios.get(`${API_URL}/oversight/subs`, { headers });
-        if (alive) { setFranchises(r.data.filter((s: Franchise) => s.link_type === "franchise")); setLoading(false); }
-      } catch { if (alive) setLoading(false); }
-    })();
-    return () => { alive = false; };
-    // eslint-disable-next-line
-  }, [token]);
-
-  const selectFranchise = async (f: Franchise) => {
-    setSelected(f); setSummary(null); setSumLoading(true);
+  const loadAll = async () => {
+    const list: BItem[] = [];
+    // 1) markaya ait subeler
     try {
-      const r = await axios.get(`${API_URL}/oversight/franchises/${f.id}/summary`, { headers });
-      setSummary(r.data);
-    } catch { setSummary(null); }
+      const r = await axios.get(`${API_URL}/companies/${companyId}/branches?t=${Date.now()}`, { headers });
+      r.data.forEach((b: any) => list.push({ id: b.id, companyId, name: b.name, address: b.address, kind: "brand", isActive: b.is_active !== false }));
+    } catch {}
+    // 2) franchise'lar (her biri ayri company → ilk branch'i drill-down hedefi)
+    try {
+      const r = await axios.get(`${API_URL}/oversight/subs?t=${Date.now()}`, { headers });
+      const fr = r.data.filter((s: any) => s.link_type === "franchise");
+      await Promise.all(fr.map(async (f: any) => {
+        try {
+          const br = await axios.get(`${API_URL}/companies/${f.id}/branches`, { headers });
+          const b = br.data.length ? br.data[0] : null;
+          if (b) list.push({ id: b.id, companyId: f.id, name: f.name, legalName: f.legal_name, address: b.address || f.address, email: f.email, kind: "franchise", isActive: f.is_active !== false });
+        } catch {}
+      }));
+    } catch {}
+    setItems(list);
+    setLoading(false);
+  };
+  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [companyId]);
+
+  const selectItem = async (it: BItem) => {
+    setSelected(it); setSummary(null); setSumLoading(true);
+    if (it.kind === "franchise") {
+      try { const r = await axios.get(`${API_URL}/oversight/franchises/${it.companyId}/summary`, { headers }); setSummary(r.data); }
+      catch { setSummary(null); }
+    } else {
+      // markaya ait: kendi endpoint'lerinden ozet kur
+      try {
+        const emp = await axios.get(`${API_URL}/employees/branch/${it.id}`, { headers });
+        const prod = await axios.get(`${API_URL}/inventory/products/branch/${it.id}`, { headers });
+        const crit = prod.data.filter((p: any) => p.current_stock < p.min_stock_level).length;
+        setSummary({ staff: emp.data.length, on_duty: 0, critical_stock: crit });
+      } catch { setSummary(null); }
+    }
     setSumLoading(false);
   };
 
+  const isFr = selected?.kind === "franchise";
+
+  // kisayol satiri helper
+  const ShortcutRow = ({ icon, label, hint, target, locked }: { icon: string; label: string; hint?: string; target?: string; locked?: boolean }) => (
+    <div
+      onClick={() => { if (!locked && target && selected) goToBranch(selected.id, target); }}
+      style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", background: locked ? C.neutralBg : "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.6 : 1 }}
+    >
+      <i className={`ti ${icon}`} style={{ fontSize: 17, color: locked ? C.textHint : (isFr ? C.franchise : C.greenDark) }} aria-hidden="true" />
+      <span style={{ fontSize: 12.5, fontWeight: 600, flex: 1 }}>{label}</span>
+      {hint && <span style={{ fontSize: 11, color: C.textFaint }}>{hint}</span>}
+      {locked ? <i className="ti ti-lock" style={{ fontSize: 14, color: C.textHint }} aria-hidden="true" /> : <i className="ti ti-arrow-right" style={{ fontSize: 15, color: C.textFaint }} aria-hidden="true" />}
+    </div>
+  );
+
   return (
     <>
-      <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 3 }}>Franchise'larım</div>
-      <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 18 }}>Markanı kullanan franchise lokasyonlarını izle. Her biri ayrı bir işletmedir — görürsün, yönetmezsin.</div>
-
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "11px 15px", marginBottom: 20, display: "flex", alignItems: "center", gap: 9 }}>
-        <i className="ti ti-eye" style={{ fontSize: 17, color: C.greenDark }} aria-hidden="true" />
-        <span style={{ fontSize: 12.5, color: C.textMuted }}>Gözetim modu — franchise verilerini görüntülersin, operasyonlarına müdahale edemezsin.</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+        <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>Şubeler</div>
+        <button onClick={() => { setShowAdd(true); setAddKind("brand"); }} style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "7px 13px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />Yeni Ekle</button>
       </div>
+      <div style={{ fontSize: 12.5, color: C.textMuted, marginBottom: 18 }}>Markaya ait şubelerin ve franchise lokasyonların. Birine tıkla, içine gir.</div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 18 }}>
-        {/* SOL — franchise listesi */}
+        {/* SOL: birlesik liste */}
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Franchise Lokasyonları</div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Tüm Lokasyonlar</div>
           {loading ? (
             <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-          ) : franchises.length === 0 ? (
+          ) : items.length === 0 ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
-              <i className="ti ti-link-off" style={{ fontSize: 22 }} aria-hidden="true" />
-              <span style={{ fontSize: 12.5 }}>Henüz franchise yok.</span>
+              <i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Henüz lokasyon yok.</span>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {franchises.map((f) => {
-                const isSel = selected?.id === f.id;
+              {items.map((it) => {
+                const isSel = selected?.id === it.id; const fr = it.kind === "franchise";
                 return (
-                  <div key={f.id} onClick={() => selectFranchise(f)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: 9, background: isSel ? C.greenSoft : C.neutralBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <i className="ti ti-building-store" style={{ fontSize: 18, color: isSel ? C.greenDark : C.textFaint }} aria-hidden="true" />
+                  <div key={it.id} onClick={() => selectItem(it)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "13px 15px", cursor: "pointer" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 9, background: isSel ? (fr ? C.franchiseSoft : C.greenSoft) : C.neutralBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <i className="ti ti-building-store" style={{ fontSize: 18, color: isSel ? (fr ? C.franchise : C.greenDark) : C.textFaint }} aria-hidden="true" />
                       </div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13.5, fontWeight: isSel ? 600 : 500 }}>{f.name}</div>
-                        {f.address && <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 4, marginTop: 1 }}><i className="ti ti-map-pin" style={{ fontSize: 12 }} aria-hidden="true" />{f.address}</div>}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: isSel ? 600 : 500, display: "flex", alignItems: "center", gap: 7 }}>
+                          {it.name}
+                          <span style={{ fontSize: 9, color: fr ? C.franchise : C.greenDark, background: fr ? C.franchiseSoft : C.greenSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600 }}>{fr ? "Franchise" : "Markaya Ait"}</span>
+                        </div>
+                        {it.address && <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}><i className="ti ti-map-pin" style={{ fontSize: 12 }} aria-hidden="true" />{it.address}</div>}
                       </div>
+                      {isSel && <i className="ti ti-chevron-right" style={{ fontSize: 16, color: C.green, flexShrink: 0 }} aria-hidden="true" />}
                     </div>
-                    {isSel && <i className="ti ti-chevron-right" style={{ fontSize: 16, color: C.green, flexShrink: 0 }} aria-hidden="true" />}
                   </div>
                 );
               })}
@@ -706,51 +757,79 @@ function FranchisePage({ token }: { token: string }) {
           )}
         </div>
 
-        {/* SAG — gozetim ozeti */}
+        {/* SAG: kopru */}
         <div>
           {!selected ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
               <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" />
-              <span style={{ fontSize: 12.5 }}>Gözetim özeti için bir franchise seçin.</span>
+              <span style={{ fontSize: 12.5 }}>Detay için bir lokasyon seçin.</span>
             </div>
           ) : (
-            <>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>{selected.name}</span>
-                <span style={{ fontSize: 10.5, color: selected.is_active ? C.greenDark : C.textFaint, background: selected.is_active ? C.greenSoft : C.neutralBg, padding: "3px 9px", borderRadius: 12, fontWeight: 600 }}>{selected.is_active ? "Aktif" : "Pasif"}</span>
-              </div>
-              <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 14, display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-mail" style={{ fontSize: 13 }} aria-hidden="true" />{selected.email}</div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "13px 14px" }}>
-                  <div style={{ fontSize: 11, color: C.textFaint, display: "flex", alignItems: "center", gap: 5, marginBottom: 5 }}><i className="ti ti-users" style={{ fontSize: 13 }} aria-hidden="true" />Personel</div>
-                  <div style={{ fontSize: 21, fontWeight: 600 }}>{sumLoading ? "—" : (summary?.staff ?? 0)}</div>
+            <div style={{ border: `0.5px solid ${C.border}`, borderRadius: 13, padding: 18, background: C.surface }}>
+              {/* kunye */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                <div style={{ width: 44, height: 44, borderRadius: 11, background: isFr ? C.franchiseSoft : C.ink, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <i className="ti ti-building-store" style={{ fontSize: 22, color: isFr ? C.franchise : C.green }} aria-hidden="true" />
                 </div>
-                <div style={{ background: C.ink, borderRadius: 10, padding: "13px 14px" }}>
-                  <div style={{ fontSize: 11, color: "#9DE8BE", display: "flex", alignItems: "center", gap: 5, marginBottom: 5 }}><i className="ti ti-activity" style={{ fontSize: 13 }} aria-hidden="true" />Bugün mesaide</div>
-                  <div style={{ fontSize: 21, fontWeight: 600, color: "#fff" }}>{sumLoading ? "—" : (summary?.on_duty ?? 0)}<span style={{ fontSize: 12, color: "#9DE8BE", fontWeight: 400 }}>/{sumLoading ? "—" : (summary?.staff ?? 0)}</span></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600 }}>{selected.name}</div>
+                  <div style={{ fontSize: 11.5, color: C.textFaint }}>{selected.legalName ? selected.legalName + " · " : ""}{isFr ? "Franchise" : "Markaya Ait"}</div>
                 </div>
+                <span style={{ fontSize: 10, color: isFr ? C.franchise : C.greenDark, background: isFr ? C.franchiseSoft : C.greenSoft, padding: "3px 9px", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                  {isFr ? <><i className="ti ti-eye" style={{ fontSize: 12 }} aria-hidden="true" />Gözetim</> : "Tam Yetki"}
+                </span>
               </div>
 
-              <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "14px 16px", marginBottom: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-box" style={{ fontSize: 14, color: C.textMuted }} aria-hidden="true" />Envanter Durumu</div>
-                {sumLoading ? (
-                  <div style={{ fontSize: 12, color: C.textHint }}>Yükleniyor…</div>
-                ) : (summary?.critical_stock ?? 0) > 0 ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.warnInk }}><i className="ti ti-alert-triangle" style={{ fontSize: 14 }} aria-hidden="true" />{summary!.critical_stock} üründe kritik stok</div>
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.green }}><i className="ti ti-circle-check" style={{ fontSize: 14 }} aria-hidden="true" />Stok seviyeleri normal</div>
-                )}
+              {/* ozet */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 9, marginBottom: 16 }}>
+                <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, padding: "11px 12px", textAlign: "center" }}><div style={{ fontSize: 18, fontWeight: 600 }}>{sumLoading ? "—" : (summary?.staff ?? 0)}</div><div style={{ fontSize: 10, color: C.textHint, marginTop: 1 }}>personel</div></div>
+                <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, padding: "11px 12px", textAlign: "center" }}><div style={{ fontSize: 18, fontWeight: 600, color: C.greenDark }}>{sumLoading ? "—" : (summary?.on_duty ?? 0)}</div><div style={{ fontSize: 10, color: C.textHint, marginTop: 1 }}>mesaide</div></div>
+                <div style={{ background: (summary?.critical_stock ?? 0) > 0 ? C.warnBg : "#fff", border: `0.5px solid ${(summary?.critical_stock ?? 0) > 0 ? C.warnBorder : C.border}`, borderRadius: 9, padding: "11px 12px", textAlign: "center" }}><div style={{ fontSize: 18, fontWeight: 600, color: (summary?.critical_stock ?? 0) > 0 ? C.warnInk : C.ink }}>{sumLoading ? "—" : (summary?.critical_stock ?? 0)}</div><div style={{ fontSize: 10, color: (summary?.critical_stock ?? 0) > 0 ? C.warnInk : C.textHint, marginTop: 1 }}>kritik stok</div></div>
               </div>
 
-              <div style={{ background: C.surface, border: `1px dashed ${C.border}`, borderRadius: 11, padding: "13px 16px", display: "flex", alignItems: "center", gap: 9 }}>
-                <i className="ti ti-lock" style={{ fontSize: 16, color: C.textHint }} aria-hidden="true" />
-                <span style={{ fontSize: 11.5, color: C.textFaint }}>Bordro / finans verileri gözetim kapsamı dışında — franchise'ın özel bilgisi.</span>
+              {/* kisayollar */}
+              <div style={{ fontSize: 11, color: C.textHint, fontWeight: 600, marginBottom: 9, textTransform: "uppercase", letterSpacing: "0.03em" }}>{isFr ? "Bu franchise'ı izle" : "Bu şubede yönet"}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                <ShortcutRow icon="ti-users" label="Personel" hint={`${summary?.staff ?? 0} kişi`} target="staff" />
+                <ShortcutRow icon="ti-box" label="Envanter" target="inventory" />
+                <ShortcutRow icon="ti-cash" label="Finans" target="payroll" />
+                {!isFr && <ShortcutRow icon="ti-receipt" label="Bordro" target="payroll" />}
+                {isFr && <ShortcutRow icon="ti-receipt" label="Bordro" locked />}
               </div>
-            </>
+
+              {isFr && (
+                <div style={{ marginTop: 12, padding: "10px 13px", background: C.bg, border: `0.5px solid ${C.border}`, borderRadius: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                  <i className="ti ti-info-circle" style={{ fontSize: 14, color: C.franchise }} aria-hidden="true" />
+                  <span style={{ fontSize: 11, color: C.textMuted }}>Franchise ayrı bir işletmedir — personel ve envanteri izlersin, bordrosu kendisine özeldir.</span>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
+
+      {showAdd && (
+        <Modal title="Yeni Lokasyon Ekle" onClose={() => setShowAdd(false)}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>Ne eklemek istersin?</div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+            <div onClick={() => setAddKind("brand")} style={{ flex: 1, border: addKind === "brand" ? `1.5px solid ${C.green}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "14px 13px", cursor: "pointer", background: addKind === "brand" ? C.greenSoft : "#fff" }}>
+              <i className="ti ti-building-store" style={{ fontSize: 19, color: C.greenDark }} aria-hidden="true" />
+              <div style={{ fontSize: 13, fontWeight: 600, marginTop: 7 }}>Markaya Ait Şube</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>Senin işletmen, tam yetki.</div>
+            </div>
+            <div onClick={() => setAddKind("franchise")} style={{ flex: 1, border: addKind === "franchise" ? `1.5px solid ${C.franchise}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "14px 13px", cursor: "pointer", background: addKind === "franchise" ? C.franchiseSoft : "#fff" }}>
+              <i className="ti ti-link" style={{ fontSize: 19, color: C.franchise }} aria-hidden="true" />
+              <div style={{ fontSize: 13, fontWeight: 600, marginTop: 7 }}>Franchise</div>
+              <div style={{ fontSize: 11, color: C.textFaint, marginTop: 2 }}>Ayrı işletme, gözetim.</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11.5, color: C.textHint, lineHeight: 1.5 }}>
+            {addKind === "brand"
+              ? "Markaya ait şube ekleme akışı Şirketim sayfasından yapılır (yakında buraya taşınacak)."
+              : "Franchise ekleme akışı yakında bu modale gelecek — şimdilik mevcut franchise oluşturma akışını kullan."}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -792,7 +871,7 @@ const SHIFT_META: Record<string, { label: string; dot: string; fg: string; bg: s
   leave:       { label: "İzinli",           dot: "#E0A82E", fg: "#9C8A4E", bg: "#FBF6E9" },
 };
 
-function StaffPage({ token, companyId }: { token: string; companyId: string }) {
+function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void }) {
   const headers = { Authorization: `Bearer ${token}` };
   const [branches, setBranches] = useState<StaffBranch[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -858,6 +937,14 @@ function StaffPage({ token, companyId }: { token: string; companyId: string }) {
   useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
 
   const selectBranch = (b: StaffBranch) => { setSelected(b); loadEmployees(b.id); };
+  useEffect(() => {
+    if (jumpBranch && branches.length) {
+      const t = branches.find((b) => b.id === jumpBranch);
+      if (t) { setSelected(t); loadEmployees(t.id); }
+      if (clearJump) clearJump();
+    }
+    /* eslint-disable-next-line */
+  }, [jumpBranch, branches.length]);
 
   const totalStaff = Object.values(counts).reduce((a, b) => a + b, 0);
 
@@ -1122,9 +1209,10 @@ type Category = { id: string; branch_id: string; name: string };
 const fmtNum = (n: number) => (n ?? 0).toLocaleString("tr-TR");
 const fmtTL = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
 
-function InventoryPage({ token, companyId }: { token: string; companyId: string }) {
+function InventoryPage({ token, companyId, jumpBranch, clearJump }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void }) {
   const headers = { Authorization: `Bearer ${token}` };
   const [view, setView] = useState<"gate" | "warehouse" | "branches">("gate");
+  const [initialBranchId, setInitialBranchId] = useState<string | null>(null);
 
   // ── ortak: sube listesi (kendi + franchise) ──
   const [branches, setBranches] = useState<InvBranch[]>([]);
@@ -1149,8 +1237,19 @@ function InventoryPage({ token, companyId }: { token: string; companyId: string 
       }));
     } catch {}
     setBranches(list); setBranchesLoaded(true);
+    if (jumpBranch && list.some((b) => b.id === jumpBranch)) {
+      setInitialBranchId(jumpBranch); setView("branches");
+      if (clearJump) clearJump();
+    }
   };
   useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
+  useEffect(() => {
+    if (jumpBranch && branchesLoaded && branches.some((b) => b.id === jumpBranch)) {
+      setInitialBranchId(jumpBranch); setView("branches");
+      if (clearJump) clearJump();
+    }
+    /* eslint-disable-next-line */
+  }, [jumpBranch, branchesLoaded, branches.length]);
 
   // ════════════════════ KAPI ════════════════════
   if (view === "gate") {
@@ -1205,7 +1304,7 @@ function InventoryPage({ token, companyId }: { token: string; companyId: string 
   }
 
   // ════════════════════ SUBE STOKLARI ════════════════════
-  return <BranchStockView token={token} branches={branches} branchesLoaded={branchesLoaded} onBack={() => setView("gate")} />;
+  return <BranchStockView token={token} branches={branches} branchesLoaded={branchesLoaded} initialBranchId={initialBranchId} onBack={() => { setInitialBranchId(null); setView("gate"); }} />;
 }
 
 // ───────────────────────── MERKEZ DEPO görünümü ─────────────────────────
@@ -1391,7 +1490,7 @@ function WarehouseView({ token, companyId, branches, onBack }: { token: string; 
 }
 
 // ───────────────────────── SUBE STOKLARI görünümü ─────────────────────────
-function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: string; branches: InvBranch[]; branchesLoaded: boolean; onBack: () => void }) {
+function BranchStockView({ token, branches, branchesLoaded, initialBranchId, onBack }: { token: string; branches: InvBranch[]; branchesLoaded: boolean; initialBranchId?: string | null; onBack: () => void }) {
   const headers = { Authorization: `Bearer ${token}` };
   const [counts, setCounts] = useState<Record<string, { total: number; critical: number }>>({});
   const [selected, setSelected] = useState<InvBranch | null>(null);
@@ -1486,6 +1585,13 @@ function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: s
     setCounts(c);
   };
   useEffect(() => { if (branchesLoaded && branches.length) loadCounts(); /* eslint-disable-next-line */ }, [branchesLoaded, branches.length]);
+  useEffect(() => {
+    if (initialBranchId && branchesLoaded && branches.length && !selected) {
+      const t = branches.find((b) => b.id === initialBranchId);
+      if (t) selectBranch(t);
+    }
+    /* eslint-disable-next-line */
+  }, [initialBranchId, branchesLoaded, branches.length]);
 
   const selectBranch = async (b: InvBranch) => {
     setSelected(b); setProdLoading(true); setActiveCat("all"); setSearch("");
