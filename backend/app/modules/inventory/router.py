@@ -51,12 +51,21 @@ async def _assert_product_structural(db: AsyncSession, current_user: User, produ
 @router.post("/categories", response_model=CategoryResponseSchema)
 async def create_category(data: CategoryCreateSchema, db: AsyncSession = Depends(get_db), current_user: User = Depends(staff)):
     await assert_structural_inventory_access(db, current_user, data.branch_id)
-    return await inventory_service.create_category(db, data)
+    cat = await inventory_service.create_category(db, data)
+    await db.commit()
+    await db.refresh(cat)
+    return cat
  
 @router.get("/categories/branch/{branch_id}", response_model=list[CategoryResponseSchema])
 async def list_categories(branch_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(staff)):
     await assert_branch_access(db, current_user, branch_id)
     return await inventory_service.get_categories(db, branch_id)
+
+@router.delete("/categories/{category_id}")
+async def delete_category(category_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(staff)):
+    await inventory_service.delete_category(db, category_id)
+    await db.commit()
+    return {"ok": True}
  
  
 # ── Suppliers ──

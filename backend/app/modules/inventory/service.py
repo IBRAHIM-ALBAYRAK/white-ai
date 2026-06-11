@@ -38,6 +38,18 @@ class InventoryService:
         )
         return result.scalars().all()
 
+    async def delete_category(self, db: AsyncSession, category_id: str) -> None:
+        result = await db.execute(select(Category).where(Category.id == category_id))
+        category = result.scalar_one_or_none()
+        if category is None:
+            return
+        # bu kategoriye bagli urunlerin category_id'sini NULL yap (urun kaybolmasin)
+        prods = await db.execute(select(Product).where(Product.category_id == category_id))
+        for pr in prods.scalars().all():
+            pr.category_id = None
+        category.is_active = False
+        await db.flush()
+
     # ── Suppliers ────────────────────────────────────────────────────────────
 
     async def create_supplier(self, db: AsyncSession, data: SupplierCreateSchema) -> Supplier:

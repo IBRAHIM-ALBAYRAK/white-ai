@@ -1115,7 +1115,9 @@ type InvBranch = { id: string; name: string; address?: string; kind: "brand" | "
 type Product = {
   id: string; branch_id: string; name: string; unit: string; unit_cost: number;
   current_stock: number; min_stock_level: number; is_active: boolean;
+  category_id?: string | null;
 };
+type Category = { id: string; branch_id: string; name: string };
 
 const fmtNum = (n: number) => (n ?? 0).toLocaleString("tr-TR");
 const fmtTL = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
@@ -1395,6 +1397,82 @@ function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: s
   const [selected, setSelected] = useState<InvBranch | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [prodLoading, setProdLoading] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: "", unit: "kg", unit_cost: "", current_stock: "", min_stock_level: "", category_id: "" });
+  const [addErr, setAddErr] = useState("");
+  const [detail, setDetail] = useState<Product | null>(null);
+  const [edit, setEdit] = useState({ name: "", unit_cost: "", current_stock: "", min_stock_level: "", category_id: "" });
+  const [editErr, setEditErr] = useState("");
+  const [delMode, setDelMode] = useState(false);
+  const [cats, setCats] = useState<Category[]>([]);
+  const [activeCat, setActiveCat] = useState<string>("all");
+  const [search, setSearch] = useState("");
+  const [showCatMgr, setShowCatMgr] = useState(false);
+  const [newCat, setNewCat] = useState("");
+  const [catErr, setCatErr] = useState("");
+
+  const loadCats = async (bid: string) => {
+    try { const r = await axios.get(`${API_URL}/inventory/categories/branch/${bid}?t=${Date.now()}`, { headers }); setCats(r.data); } catch { setCats([]); }
+  };
+  const addCat = async () => {
+    setCatErr("");
+    if (!newCat.trim() || !selected) return;
+    try { await axios.post(`${API_URL}/inventory/categories`, { branch_id: selected.id, name: newCat.trim() }, { headers }); setNewCat(""); await loadCats(selected.id); }
+    catch (e: any) { const d = e.response?.data?.detail; setCatErr(typeof d === "string" ? d : "Kategori eklenemedi."); }
+  };
+  const delCat = async (cid: string) => {
+    if (!selected) return;
+    try { await axios.delete(`${API_URL}/inventory/categories/${cid}`, { headers }); if (activeCat === cid) setActiveCat("all"); await loadCats(selected.id); await reloadProducts(selected.id); }
+    catch {}
+  };
+  const catName = (cid?: string | null) => cats.find((c) => c.id === cid)?.name;
+
+  const reloadProducts = async (bid: string) => {
+    try { const r = await axios.get(`${API_URL}/inventory/products/branch/${bid}?t=${Date.now()}`, { headers }); setProducts(r.data); } catch {}
+    loadCounts();
+  };
+  const addProduct = async () => {
+    setAddErr("");
+    if (!form.name) { setAddErr("Ürün adı zorunlu."); return; }
+    if (!selected) return;
+    try {
+      await axios.post(`${API_URL}/inventory/products`, {
+        branch_id: selected.id, name: form.name, unit: form.unit,
+        unit_cost: parseFloat(form.unit_cost) || 0,
+        current_stock: parseFloat(form.current_stock) || 0,
+        min_stock_level: parseFloat(form.min_stock_level) || 0,
+        category_id: form.category_id || null,
+      }, { headers });
+      setShowAdd(false);
+      setForm({ name: "", unit: "kg", unit_cost: "", current_stock: "", min_stock_level: "", category_id: "" });
+      await reloadProducts(selected.id);
+    } catch (e: any) { const d = e.response?.data?.detail; setAddErr(typeof d === "string" ? d : "Ürün eklenemedi."); }
+  };
+  const openDetail = (pr: Product) => {
+    setDetail(pr);
+    setEdit({ name: pr.name, unit_cost: String(pr.unit_cost), current_stock: String(pr.current_stock), min_stock_level: String(pr.min_stock_level), category_id: pr.category_id || "" });
+    setEditErr(""); setDelMode(false);
+  };
+  const saveEdit = async () => {
+    setEditErr("");
+    try {
+      await axios.put(`${API_URL}/inventory/products/${detail!.id}`, {
+        name: edit.name, unit_cost: parseFloat(edit.unit_cost) || 0,
+        current_stock: parseFloat(edit.current_stock) || 0, min_stock_level: parseFloat(edit.min_stock_level) || 0,
+        category_id: edit.category_id || null,
+      }, { headers });
+      setDetail(null); if (selected) await reloadProducts(selected.id);
+    } catch (e: any) { const d = e.response?.data?.detail; setEditErr(typeof d === "string" ? d : "Güncellenemedi."); }
+  };
+  const delProduct = async () => {
+    setEditErr("");
+    try { await axios.delete(`${API_URL}/inventory/products/${detail!.id}`, { headers }); setDetail(null); if (selected) await reloadProducts(selected.id); }
+    catch (e: any) { const d = e.response?.data?.detail; setEditErr(typeof d === "string" ? d : "Silinemedi."); }
+  };
+
+  const inputStyle = { width: "100%", padding: "9px 11px", border: "0.5px solid #E0DACE", borderRadius: 8, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" as const };
+  const labelStyle = { fontSize: 11, color: C.textFaint, fontWeight: 600, display: "block", marginBottom: 6 };
+  const greenBtn = { fontSize: 12, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 } as const;
 
   const loadCounts = async () => {
     const c: Record<string, { total: number; critical: number }> = {};
@@ -1410,8 +1488,9 @@ function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: s
   useEffect(() => { if (branchesLoaded && branches.length) loadCounts(); /* eslint-disable-next-line */ }, [branchesLoaded, branches.length]);
 
   const selectBranch = async (b: InvBranch) => {
-    setSelected(b); setProdLoading(true);
-    try { const r = await axios.get(`${API_URL}/inventory/products/branch/${b.id}`, { headers }); setProducts(r.data); }
+    setSelected(b); setProdLoading(true); setActiveCat("all"); setSearch("");
+    loadCats(b.id);
+    try { const r = await axios.get(`${API_URL}/inventory/products/branch/${b.id}?t=${Date.now()}`, { headers }); setProducts(r.data); }
     catch { setProducts([]); }
     setProdLoading(false);
   };
@@ -1480,9 +1559,33 @@ function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: s
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.name} — Ürünler</span>
-                {isFranchise && <span style={{ fontSize: 10.5, color: C.franchise, background: C.franchiseSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-eye" style={{ fontSize: 13 }} aria-hidden="true" />Gözetim</span>}
+                {isFranchise ? (
+                  <span style={{ fontSize: 10.5, color: C.franchise, background: C.franchiseSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-eye" style={{ fontSize: 13 }} aria-hidden="true" />Gözetim</span>
+                ) : (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={{ fontSize: 12, fontWeight: 600, color: C.greenDark, background: C.greenSoft, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }} onClick={() => { setShowCatMgr(true); setCatErr(""); }}><i className="ti ti-folder-plus" style={{ fontSize: 14 }} aria-hidden="true" />Kategori</button>
+                    <button style={greenBtn} onClick={() => { setShowAdd(true); setAddErr(""); }}><i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />Ürün Ekle</button>
+                  </div>
+                )}
               </div>
 
+              {!prodLoading && products.length > 0 && (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.surface, border: `0.5px solid #E6E4DD`, borderRadius: 9, padding: "8px 12px", marginBottom: 11 }}>
+                    <i className="ti ti-search" style={{ fontSize: 15, color: C.textHint }} aria-hidden="true" />
+                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ürün ara…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 12.5, fontFamily: "inherit", flex: 1, color: C.ink }} />
+                    {search && <i className="ti ti-x" onClick={() => setSearch("")} style={{ fontSize: 14, color: C.textHint, cursor: "pointer" }} aria-hidden="true" />}
+                  </div>
+                  <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 13 }}>
+                    {(() => { const allActive = activeCat === "all"; return (
+                      <span onClick={() => setActiveCat("all")} style={{ fontSize: 11.5, padding: "5px 13px", borderRadius: 20, background: allActive ? C.ink : C.surface, color: allActive ? "#fff" : C.textMuted, border: allActive ? "none" : `0.5px solid #E6E4DD`, fontWeight: 600, cursor: "pointer" }}>Tümü <span style={{ opacity: 0.6 }}>{products.length}</span></span>
+                    ); })()}
+                    {cats.map((c) => { const act = activeCat === c.id; const cnt = products.filter((p) => p.category_id === c.id).length; return (
+                      <span key={c.id} onClick={() => setActiveCat(c.id)} style={{ fontSize: 11.5, padding: "5px 13px", borderRadius: 20, background: act ? C.ink : C.surface, color: act ? "#fff" : C.textMuted, border: act ? "none" : `0.5px solid #E6E4DD`, fontWeight: act ? 600 : 500, cursor: "pointer" }}>{c.name} <span style={{ color: act ? "rgba(255,255,255,0.6)" : C.textHint }}>{cnt}</span></span>
+                    ); })}
+                  </div>
+                </>
+              )}
               {prodLoading ? (
                 <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
               ) : products.length === 0 ? (
@@ -1490,13 +1593,22 @@ function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: s
                   <i className="ti ti-package-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bu şubede henüz ürün yok.</span>
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                  {products.map((p) => {
+                (() => {
+                  const filtered = products.filter((p) => (activeCat === "all" || p.category_id === activeCat) && (!search || p.name.toLowerCase().includes(search.toLowerCase())));
+                  if (filtered.length === 0) return (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+                      <i className="ti ti-search-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Eşleşen ürün yok.</span>
+                    </div>
+                  );
+                  return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {filtered.map((p) => {
                     const low = p.current_stock < p.min_stock_level;
+                    const cn = catName(p.category_id);
                     return (
-                      <div key={p.id} style={{ background: low ? C.warnSoft : C.bg, border: `0.5px solid ${low ? C.warnBorder : C.border}`, borderRadius: 10, padding: "10px 13px", display: "flex", alignItems: "center", gap: 11 }}>
+                      <div key={p.id} onClick={() => { if (!isFranchise) openDetail(p); }} style={{ background: low ? C.warnSoft : C.bg, border: `0.5px solid ${low ? C.warnBorder : C.border}`, borderRadius: 10, padding: "10px 13px", display: "flex", alignItems: "center", gap: 11, cursor: isFranchise ? "default" : "pointer" }}>
                         <div style={{ width: 32, height: 32, borderRadius: 8, background: low ? "#FBF0DA" : C.neutralBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className="ti ti-package" style={{ fontSize: 16, color: low ? C.warnInk : C.textMuted }} aria-hidden="true" /></div>
-                        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 600 }}>{p.name}</div><div style={{ fontSize: 10.5, color: C.textFaint }}>{fmtTL(p.unit_cost)} / {p.unit}</div></div>
+                        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 7 }}>{p.name}{cn && <span style={{ fontSize: 9, color: C.textFaint, background: C.neutralBg, padding: "1px 7px", borderRadius: 7, fontWeight: 500 }}>{cn}</span>}</div><div style={{ fontSize: 10.5, color: C.textFaint }}>{fmtTL(p.unit_cost)} / {p.unit}</div></div>
                         <div style={{ textAlign: "right" }}>
                           <div style={{ fontSize: 12.5, fontWeight: 600, color: low ? C.warnInk : C.ink }}>{fmtNum(p.current_stock)} {p.unit}</div>
                           {low ? <div style={{ fontSize: 9.5, color: C.warnInk, display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end" }}><i className="ti ti-alert-triangle" style={{ fontSize: 10 }} aria-hidden="true" />min {fmtNum(p.min_stock_level)}</div> : <div style={{ fontSize: 9.5, color: C.textHint }}>min {fmtNum(p.min_stock_level)}</div>}
@@ -1504,7 +1616,8 @@ function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: s
                       </div>
                     );
                   })}
-                </div>
+                  </div>
+                  ); })()
               )}
 
               <div style={{ marginTop: 12, padding: "10px 13px", background: "#F4F1FB", border: "0.5px solid #E4DDF6", borderRadius: 10, display: "flex", alignItems: "center", gap: 8 }}>
@@ -1515,6 +1628,84 @@ function BranchStockView({ token, branches, branchesLoaded, onBack }: { token: s
           )}
         </div>
       </div>
+
+      {showAdd && selected && (
+        <Modal title={`${selected.name} — Ürün Ekle`} onClose={() => setShowAdd(false)}>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Ürün Adı *</label><input style={inputStyle} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Süt" /></div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Birim</label>
+              <select style={inputStyle} value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
+                <option value="kg">kg</option><option value="litre">litre</option><option value="adet">adet</option><option value="kutu">kutu</option>
+              </select>
+            </div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Başlangıç Stoğu</label><input style={inputStyle} type="number" value={form.current_stock} onChange={(e) => setForm({ ...form, current_stock: e.target.value })} placeholder="0" /></div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Birim Maliyet (₺)</label><input style={inputStyle} type="number" value={form.unit_cost} onChange={(e) => setForm({ ...form, unit_cost: e.target.value })} placeholder="0" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Min. Stok Seviyesi</label><input style={inputStyle} type="number" value={form.min_stock_level} onChange={(e) => setForm({ ...form, min_stock_level: e.target.value })} placeholder="0" /></div>
+          </div>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Kategori</label>
+            <select style={inputStyle} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+              <option value="">Kategorisiz</option>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          {addErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {addErr}</div>}
+          <button style={{ ...greenBtn, width: "100%", justifyContent: "center", padding: 11 }} onClick={addProduct}>Ürünü Ekle</button>
+        </Modal>
+      )}
+
+      {detail && (
+        <Modal title={`${detail.name} — Düzenle`} onClose={() => setDetail(null)}>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Ürün Adı</label><input style={inputStyle} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Mevcut Stok ({detail.unit})</label><input style={inputStyle} type="number" value={edit.current_stock} onChange={(e) => setEdit({ ...edit, current_stock: e.target.value })} /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Min. Stok</label><input style={inputStyle} type="number" value={edit.min_stock_level} onChange={(e) => setEdit({ ...edit, min_stock_level: e.target.value })} /></div>
+          </div>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Birim Maliyet (₺)</label><input style={inputStyle} type="number" value={edit.unit_cost} onChange={(e) => setEdit({ ...edit, unit_cost: e.target.value })} /></div>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Kategori</label>
+            <select style={inputStyle} value={edit.category_id} onChange={(e) => setEdit({ ...edit, category_id: e.target.value })}>
+              <option value="">Kategorisiz</option>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          {delMode && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px", background: C.dangerBg, borderRadius: 10, border: `0.5px solid ${C.dangerBorder}`, marginBottom: 12 }}>
+              <div style={{ fontSize: 12.5, color: C.dangerInk }}>Bu ürünü stoktan kaldırmak istediğine emin misin?</div>
+              <button style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: C.dangerInk, border: "none", padding: 10, borderRadius: 8, cursor: "pointer" }} onClick={delProduct}>Kaldırmayı Onayla</button>
+            </div>
+          )}
+          {editErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {editErr}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ ...greenBtn, flex: 1, justifyContent: "center", padding: 10 }} onClick={saveEdit}>Kaydet</button>
+            <button style={{ fontSize: 12, fontWeight: 600, color: C.dangerInk, background: C.dangerBg, border: `0.5px solid ${C.dangerBorder}`, padding: "10px 14px", borderRadius: 8, cursor: "pointer" }} onClick={() => setDelMode(!delMode)}>Kaldır</button>
+          </div>
+        </Modal>
+      )}
+
+      {showCatMgr && selected && (
+        <Modal title={`${selected.name} — Kategoriler`} onClose={() => setShowCatMgr(false)}>
+          <label style={labelStyle}>Yeni Kategori</label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <input style={{ ...inputStyle, flex: 1 }} value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="örn. İçecek, Ambalaj…" onKeyDown={(e) => { if (e.key === "Enter") addCat(); }} />
+            <button style={{ ...greenBtn, padding: "9px 16px" }} onClick={addCat}>Ekle</button>
+          </div>
+          {catErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {catErr}</div>}
+          {cats.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "16px 0", textAlign: "center" }}>Henüz kategori yok.</div>
+          ) : (
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+              {cats.map((c) => (
+                <span key={c.id} style={{ fontSize: 11.5, padding: "5px 11px", borderRadius: 16, background: C.neutralBg, color: C.textMuted, display: "flex", alignItems: "center", gap: 7 }}>
+                  {c.name}
+                  <i className="ti ti-x" onClick={() => delCat(c.id)} style={{ fontSize: 12, cursor: "pointer", color: C.textHint }} aria-hidden="true" />
+                </span>
+              ))}
+            </div>
+          )}
+          <div style={{ marginTop: 14, fontSize: 11, color: C.textHint, lineHeight: 1.5 }}>Kategori silinince o kategorideki ürünler silinmez, sadece kategorisiz kalır.</div>
+        </Modal>
+      )}
     </>
   );
 }
