@@ -637,13 +637,17 @@ function CompanyPage({ token, companyId, brandName }: { token: string; companyId
 
 
 // ============================================================================
-// Gelir / Gider — marka defteri. /finance/categories + /finance/entries
+// Gelir / Gider — marka defteri + denetim izi. /finance/*
 // ============================================================================
 type LedgerBranch = { id: string; name: string };
 type FinCategory = { id: string; name: string; kind: string };
 type FinEntry = {
   id: string; category_id: string; category_name?: string | null; kind: string;
-  amount: number; entry_date: string; branch_id?: string | null; note?: string | null;
+  amount: number; entry_date: string; branch_id?: string | null; note?: string | null; is_deleted?: boolean;
+};
+type AuditRow = {
+  id: string; action: string; kind?: string | null; amount?: number | null;
+  old_value?: string | null; new_value?: string | null; actor_name?: string | null; created_at: string;
 };
 const AYLAR_L = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 const fmtTL2L = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -652,26 +656,39 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtDateShort = (iso: string) => {
   try { const d = new Date(iso + "T00:00:00"); return `${d.getDate()} ${AYLAR_L[d.getMonth()].slice(0, 3)}`; } catch { return iso; }
 };
+const fmtDateTime = (iso: string) => {
+  try { const d = new Date(iso); return `${d.getDate()} ${AYLAR_L[d.getMonth()].slice(0, 3)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; } catch { return iso; }
+};
 
 function LedgerPage({ token, companyId }: { token: string; companyId: string }) {
   const headers = { Authorization: `Bearer ${token}` };
   const today = new Date();
+  const [tab, setTab] = useState<"records" | "history">("records");
   const [kind, setKind] = useState<"expense" | "income">("expense");
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [branches, setBranches] = useState<LedgerBranch[]>([]);
-  const [branchFilter, setBranchFilter] = useState<string>(""); // "" = tum subeler
+  const [branchFilter, setBranchFilter] = useState<string>("");
   const [cats, setCats] = useState<FinCategory[]>([]);
-  const [activeCat, setActiveCat] = useState<string>(""); // "" = tumu
+  const [activeCat, setActiveCat] = useState<string>("");
   const [entries, setEntries] = useState<FinEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
 
   // modallar
   const [showCatMgr, setShowCatMgr] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [showEntry, setShowEntry] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null); // null = yeni, dolu = duzenleme
   const [entryForm, setEntryForm] = useState({ category_id: "", amount: "", entry_date: todayISO(), branch_id: "", note: "" });
   const [entryErr, setEntryErr] = useState("");
+  // sifre teyit (sil ve duzenle icin)
+  const [pwAction, setPwAction] = useState<null | { type: "delete" | "edit"; entry: FinEntry; payload?: any }>(null);
+  const [pwValue, setPwValue] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
 
   const loadBranches = async () => {
     try {
@@ -680,25 +697,30 @@ function LedgerPage({ token, companyId }: { token: string; companyId: string }) 
     } catch { setBranches([]); }
   };
   const loadCats = async () => {
-    try {
-      const r = await axios.get(`${API_URL}/finance/categories?kind=${kind}&t=${Date.now()}`, { headers });
-      setCats(r.data);
-    } catch { setCats([]); }
+    try { const r = await axios.get(`${API_URL}/finance/categories?kind=${kind}&t=${Date.now()}`, { headers }); setCats(r.data); }
+    catch { setCats([]); }
   };
   const loadEntries = async () => {
     setLoading(true);
     try {
-      let url = `${API_URL}/finance/entries?year=${year}&month=${month}&kind=${kind}&t=${Date.now()}`;
+      let url = `${API_URL}/finance/entries?year=${year}&month=${month}&kind=${kind}&include_deleted=${showDeleted}&t=${Date.now()}`;
       if (branchFilter) url += `&branch_id=${branchFilter}`;
       const r = await axios.get(url, { headers });
       setEntries(r.data);
     } catch { setEntries([]); }
     setLoading(false);
   };
+  const loadAudit = async () => {
+    setAuditLoading(true);
+    try { const r = await axios.get(`${API_URL}/finance/audit?limit=100&t=${Date.now()}`, { headers }); setAudit(r.data); }
+    catch { setAudit([]); }
+    setAuditLoading(false);
+  };
 
   useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
   useEffect(() => { loadCats(); setActiveCat(""); /* eslint-disable-next-line */ }, [kind]);
-  useEffect(() => { loadEntries(); /* eslint-disable-next-line */ }, [kind, year, month, branchFilter]);
+  useEffect(() => { loadEntries(); /* eslint-disable-next-line */ }, [kind, year, month, branchFilter, showDeleted]);
+  useEffect(() => { if (tab === "history") loadAudit(); /* eslint-disable-next-line */ }, [tab]);
 
   const prevMonth = () => { if (month === 1) { setMonth(12); setYear(year - 1); } else setMonth(month - 1); };
   const nextMonth = () => {
@@ -711,48 +733,69 @@ function LedgerPage({ token, companyId }: { token: string; companyId: string }) 
   const addCat = async () => {
     const name = newCatName.trim();
     if (!name) return;
-    try {
-      await axios.post(`${API_URL}/finance/categories`, { name, kind }, { headers });
-      setNewCatName("");
-      await loadCats();
-    } catch { /* sessiz */ }
+    try { await axios.post(`${API_URL}/finance/categories`, { name, kind }, { headers }); setNewCatName(""); await loadCats(); } catch { /* */ }
   };
   const delCat = async (id: string) => {
-    try { await axios.delete(`${API_URL}/finance/categories/${id}`, { headers }); await loadCats(); if (activeCat === id) setActiveCat(""); }
-    catch { /* sessiz */ }
+    try { await axios.delete(`${API_URL}/finance/categories/${id}`, { headers }); await loadCats(); if (activeCat === id) setActiveCat(""); } catch { /* */ }
   };
 
-  const openEntry = () => {
-    setEntryErr("");
+  const openNew = () => {
+    setEntryErr(""); setEditId(null);
     setEntryForm({ category_id: cats[0]?.id || "", amount: "", entry_date: todayISO(), branch_id: "", note: "" });
     setShowEntry(true);
   };
-  const saveEntry = async () => {
+  const openEdit = (e: FinEntry) => {
+    setEntryErr(""); setEditId(e.id);
+    setEntryForm({ category_id: e.category_id, amount: String(e.amount), entry_date: e.entry_date, branch_id: e.branch_id || "", note: e.note || "" });
+    setShowEntry(true);
+  };
+
+  // yeni kayit = direkt; duzenleme = sifre modaline yonlendir
+  const submitEntry = async () => {
     setEntryErr("");
     if (!entryForm.category_id) { setEntryErr("Kategori seçin."); return; }
     const amt = parseFloat(entryForm.amount);
     if (!amt || amt <= 0) { setEntryErr("Geçerli bir tutar girin."); return; }
+    const payload = { category_id: entryForm.category_id, amount: amt, entry_date: entryForm.entry_date || todayISO(), branch_id: entryForm.branch_id || null, note: entryForm.note.trim() || null };
+    if (editId) {
+      // duzenleme -> sifre iste
+      const ent = entries.find((x) => x.id === editId);
+      if (ent) { setShowEntry(false); setPwValue(""); setPwErr(""); setPwAction({ type: "edit", entry: ent, payload }); }
+      return;
+    }
+    // yeni kayit -> direkt
     try {
-      await axios.post(`${API_URL}/finance/entries`, {
-        category_id: entryForm.category_id,
-        amount: amt,
-        entry_date: entryForm.entry_date || todayISO(),
-        branch_id: entryForm.branch_id || null,
-        note: entryForm.note.trim() || null,
-      }, { headers });
-      setShowEntry(false);
-      await loadEntries(); await loadCats();
+      await axios.post(`${API_URL}/finance/entries`, payload, { headers });
+      setShowEntry(false); await loadEntries(); await loadCats();
     } catch (e: any) { const d = e.response?.data?.detail; setEntryErr(typeof d === "string" ? d : "Kayıt eklenemedi."); }
   };
-  const delEntry = async (id: string) => {
-    try { await axios.delete(`${API_URL}/finance/entries/${id}`, { headers }); await loadEntries(); }
-    catch { /* sessiz */ }
+
+  const askDelete = (e: FinEntry) => { setPwValue(""); setPwErr(""); setPwAction({ type: "delete", entry: e }); };
+
+  const confirmPw = async () => {
+    if (!pwAction || pwBusy) return;
+    if (!pwValue) { setPwErr("Şifre girin."); return; }
+    setPwBusy(true); setPwErr("");
+    try {
+      if (pwAction.type === "delete") {
+        await axios.delete(`${API_URL}/finance/entries/${pwAction.entry.id}`, { headers, data: { admin_password: pwValue } });
+      } else {
+        await axios.put(`${API_URL}/finance/entries/${pwAction.entry.id}`, { admin_password: pwValue, ...pwAction.payload }, { headers });
+      }
+      setPwAction(null); setPwValue("");
+      await loadEntries(); await loadCats();
+      if (tab === "history") await loadAudit();
+    } catch (e: any) {
+      const d = e.response?.data?.detail;
+      setPwErr(typeof d === "string" ? d : "İşlem başarısız.");
+    }
+    setPwBusy(false);
   };
 
-  // kategori bazinda toplam (gosterilen entries'ten)
   const catTotals: Record<string, number> = {};
-  entries.forEach((e) => { catTotals[e.category_id] = (catTotals[e.category_id] || 0) + e.amount; });
-  const periodTotal = entries.reduce((a, e) => a + e.amount, 0);
+  entries.filter((e) => !e.is_deleted).forEach((e) => { catTotals[e.category_id] = (catTotals[e.category_id] || 0) + e.amount; });
+  const activeEntries = entries.filter((e) => !e.is_deleted);
+  const periodTotal = activeEntries.reduce((a, e) => a + e.amount, 0);
   const shownEntries = activeCat ? entries.filter((e) => e.category_id === activeCat) : entries;
   const branchName = (bid?: string | null) => bid ? (branches.find((b) => b.id === bid)?.name || "—") : "Marka geneli";
 
@@ -760,13 +803,19 @@ function LedgerPage({ token, companyId }: { token: string; companyId: string }) 
   const accentBg = kind === "expense" ? C.warnBg : C.greenSoft;
   const accentBorder = kind === "expense" ? C.warnBorder : C.green;
 
+  const actionMeta = (a: string) => {
+    if (a === "created") return { label: "Eklendi", icon: "ti-plus", color: C.greenDark, bg: C.greenSoft };
+    if (a === "updated") return { label: "Düzenlendi", icon: "ti-pencil", color: C.warnInk, bg: C.warnBg };
+    return { label: "Silindi", icon: "ti-trash", color: "#C0564B", bg: "#FBEAE8" };
+  };
+
   return (
     <>
-      {/* baslik + donem + sube filtresi */}
+      {/* baslik + donem + sube */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>Gelir / Gider</div>
-          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>Kategori tanımla, kayıt ekle. Finans özeti buradan beslenir.</div>
+          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>Kategori tanımla, kayıt ekle. Her işlem geçmişe kaydedilir.</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <div style={{ display: "flex", alignItems: "center", background: C.surface, border: "0.5px solid #E6E4DD", borderRadius: 9, overflow: "hidden" }}>
@@ -776,84 +825,141 @@ function LedgerPage({ token, companyId }: { token: string; companyId: string }) 
           </div>
           <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} style={{ fontSize: 12, border: "0.5px solid #E6E4DD", borderRadius: 9, padding: "7px 11px", background: C.surface, color: "#3C3A36" }}>
             <option value="">Tüm şubeler</option>
-            <option value="__brand__" disabled>— marka geneli kayıtlar dahildir —</option>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
       </div>
 
-      {/* gelir/gider toggle */}
-      <div style={{ display: "inline-flex", background: C.neutralBg, borderRadius: 10, padding: 3, margin: "16px 0 18px" }}>
-        <div onClick={() => setKind("expense")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: kind === "expense" ? 600 : 500, color: kind === "expense" ? "#fff" : C.textFaint, background: kind === "expense" ? C.warnInk : "transparent", borderRadius: 8, cursor: "pointer" }}>Gider</div>
-        <div onClick={() => setKind("income")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: kind === "income" ? 600 : 500, color: kind === "income" ? "#fff" : C.textFaint, background: kind === "income" ? C.green : "transparent", borderRadius: 8, cursor: "pointer" }}>Gelir</div>
+      {/* gider/gelir toggle + Kayitlar/Gecmis alt-sekme */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0 16px" }}>
+        <div style={{ display: "inline-flex", background: C.neutralBg, borderRadius: 10, padding: 3 }}>
+          <div onClick={() => setKind("expense")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: kind === "expense" ? 600 : 500, color: kind === "expense" ? "#fff" : C.textFaint, background: kind === "expense" ? C.warnInk : "transparent", borderRadius: 8, cursor: "pointer" }}>Gider</div>
+          <div onClick={() => setKind("income")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: kind === "income" ? 600 : 500, color: kind === "income" ? "#fff" : C.textFaint, background: kind === "income" ? C.green : "transparent", borderRadius: 8, cursor: "pointer" }}>Gelir</div>
+        </div>
+        <div style={{ display: "inline-flex", gap: 2, background: "#F7F6F2", borderRadius: 9, padding: 3 }}>
+          <div onClick={() => setTab("records")} style={{ padding: "6px 13px", fontSize: 12, fontWeight: tab === "records" ? 600 : 500, color: tab === "records" ? C.ink : C.textFaint, background: tab === "records" ? "#fff" : "transparent", borderRadius: 7, cursor: "pointer", boxShadow: tab === "records" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>Kayıtlar</div>
+          <div onClick={() => setTab("history")} style={{ padding: "6px 13px", fontSize: 12, fontWeight: tab === "history" ? 600 : 500, color: tab === "history" ? C.ink : C.textFaint, background: tab === "history" ? "#fff" : "transparent", borderRadius: 7, cursor: "pointer", boxShadow: tab === "history" ? "0 1px 2px rgba(0,0,0,0.05)" : "none", display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-history" style={{ fontSize: 13 }} aria-hidden="true" />Geçmiş</div>
+        </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "0.75fr 1.7fr", gap: 18 }}>
-        {/* SOL: kategoriler */}
-        <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
-            <span style={{ fontSize: 11, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>{kind === "expense" ? "Gider" : "Gelir"} Kategorileri</span>
-            <button onClick={() => setShowCatMgr(true)} style={{ fontSize: 10.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "4px 9px", borderRadius: 7, cursor: "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}><i className="ti ti-settings" style={{ fontSize: 12 }} aria-hidden="true" />Yönet</button>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            <div onClick={() => setActiveCat("")} style={{ background: activeCat === "" ? C.bg : C.surface, border: activeCat === "" ? `1.5px solid ${accentBorder}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tümü</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{fmtTLL(periodTotal)}</span>
+      {tab === "records" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "0.75fr 1.7fr", gap: 18 }}>
+          {/* SOL kategoriler */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
+              <span style={{ fontSize: 11, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>{kind === "expense" ? "Gider" : "Gelir"} Kategorileri</span>
+              <button onClick={() => setShowCatMgr(true)} style={{ fontSize: 10.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "4px 9px", borderRadius: 7, cursor: "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}><i className="ti ti-settings" style={{ fontSize: 12 }} aria-hidden="true" />Yönet</button>
             </div>
-            {cats.length === 0 ? (
-              <div style={{ fontSize: 11.5, color: C.textHint, padding: "14px 0", textAlign: "center" }}>Henüz kategori yok.</div>
-            ) : cats.map((c) => (
-              <div key={c.id} onClick={() => setActiveCat(c.id)} style={{ background: activeCat === c.id ? C.bg : C.surface, border: activeCat === c.id ? `1.5px solid ${accentBorder}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 12.5, fontWeight: activeCat === c.id ? 600 : 400 }}>{c.name}</span>
-                <span style={{ fontSize: 12, color: catTotals[c.id] ? C.textMuted : C.textHint }}>{fmtTLL(catTotals[c.id] || 0)}</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              <div onClick={() => setActiveCat("")} style={{ background: activeCat === "" ? C.bg : C.surface, border: activeCat === "" ? `1.5px solid ${accentBorder}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tümü</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{fmtTLL(periodTotal)}</span>
               </div>
-            ))}
-            <div onClick={() => setShowCatMgr(true)} style={{ background: C.surface, border: `0.5px dashed #E0DACE`, borderRadius: 11, padding: "10px 13px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: C.greenDark }}>
-              <i className="ti ti-plus" style={{ fontSize: 13 }} aria-hidden="true" /><span style={{ fontSize: 11.5, fontWeight: 500 }}>Kategori ekle</span>
+              {cats.length === 0 ? (
+                <div style={{ fontSize: 11.5, color: C.textHint, padding: "14px 0", textAlign: "center" }}>Henüz kategori yok.</div>
+              ) : cats.map((c) => (
+                <div key={c.id} onClick={() => setActiveCat(c.id)} style={{ background: activeCat === c.id ? C.bg : C.surface, border: activeCat === c.id ? `1.5px solid ${accentBorder}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12.5, fontWeight: activeCat === c.id ? 600 : 400 }}>{c.name}</span>
+                  <span style={{ fontSize: 12, color: catTotals[c.id] ? C.textMuted : C.textHint }}>{fmtTLL(catTotals[c.id] || 0)}</span>
+                </div>
+              ))}
+              <div onClick={() => setShowCatMgr(true)} style={{ background: C.surface, border: `0.5px dashed #E0DACE`, borderRadius: 11, padding: "10px 13px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: C.greenDark }}>
+                <i className="ti ti-plus" style={{ fontSize: 13 }} aria-hidden="true" /><span style={{ fontSize: 11.5, fontWeight: 500 }}>Kategori ekle</span>
+              </div>
             </div>
+          </div>
+
+          {/* SAG kayitlar */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Kayıtlar — {AYLAR_L[month - 1]} {year}</span>
+              <button onClick={openNew} disabled={cats.length === 0} style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: cats.length === 0 ? "#8A867F" : C.ink, border: "none", padding: "8px 14px", borderRadius: 9, cursor: cats.length === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-plus" style={{ fontSize: 14, color: "#2EE06A" }} aria-hidden="true" />Kayıt Ekle</button>
+            </div>
+
+            <div style={{ background: accentBg, border: `0.5px solid ${kind === "expense" ? C.warnBorder : C.green}`, borderRadius: 11, padding: "12px 15px", marginBottom: 13, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 12, color: accent, fontWeight: 500 }}>Dönem toplam {kind === "expense" ? "gider" : "gelir"}{activeCat ? " (filtreli)" : ""}</span>
+              <span style={{ fontSize: 17, fontWeight: 600, color: accent }}>{fmtTL2L(shownEntries.filter((e) => !e.is_deleted).reduce((a, e) => a + e.amount, 0))}</span>
+            </div>
+
+            {loading ? (
+              <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+            ) : shownEntries.length === 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "34px 0", color: C.textHint }}>
+                <i className="ti ti-notebook" style={{ fontSize: 24 }} aria-hidden="true" />
+                <span style={{ fontSize: 12.5 }}>Bu dönemde {kind === "expense" ? "gider" : "gelir"} kaydı yok.</span>
+                {cats.length > 0 && <button onClick={openNew} style={{ fontSize: 11.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 600, marginTop: 2 }}>İlk kaydı ekle</button>}
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 0.7fr 0.9fr 64px", gap: 10, padding: "0 14px 7px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                  <span>kategori</span><span>şube</span><span>tarih</span><span style={{ textAlign: "right" }}>tutar</span><span style={{ textAlign: "center" }}>işlem</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  {shownEntries.map((e) => (
+                    <div key={e.id} style={{ background: e.is_deleted ? "#FBFAF8" : C.bg, border: `0.5px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", display: "grid", gridTemplateColumns: "1.3fr 1fr 0.7fr 0.9fr 64px", gap: 10, alignItems: "center", opacity: e.is_deleted ? 0.55 : 1 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, textDecoration: e.is_deleted ? "line-through" : "none" }}>{e.category_name || cats.find((c) => c.id === e.category_id)?.name || "—"}{e.is_deleted && <span style={{ fontSize: 9, color: "#C0564B", background: "#FBEAE8", padding: "1px 6px", borderRadius: 6, marginLeft: 6, fontWeight: 600, textDecoration: "none" }}>silindi</span>}</div>
+                        {e.note && <div style={{ fontSize: 10, color: C.textHint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.note}</div>}
+                      </div>
+                      <span style={{ fontSize: 11.5, color: C.textMuted }}>{branchName(e.branch_id)}</span>
+                      <span style={{ fontSize: 11.5, color: C.textMuted }}>{fmtDateShort(e.entry_date)}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, textAlign: "right", color: accent }}>{fmtTLL(e.amount)}</span>
+                      <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
+                        {!e.is_deleted ? (
+                          <>
+                            <button onClick={() => openEdit(e)} aria-label="Düzenle" style={{ width: 27, height: 27, borderRadius: 7, border: "0.5px solid #E6E4DD", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-pencil" style={{ fontSize: 13, color: C.textMuted }} aria-hidden="true" /></button>
+                            <button onClick={() => askDelete(e)} aria-label="Sil" style={{ width: 27, height: 27, borderRadius: 7, border: "0.5px solid #F3D9D6", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-trash" style={{ fontSize: 13, color: "#C0564B" }} aria-hidden="true" /></button>
+                          </>
+                        ) : (
+                          <span style={{ fontSize: 9.5, color: C.textHint }}>arşiv</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div onClick={() => setShowDeleted(!showDeleted)} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: C.textFaint, marginTop: 12, cursor: "pointer" }}>
+                  <span style={{ width: 30, height: 17, background: showDeleted ? C.green : "#E6E4DD", borderRadius: 9, position: "relative", display: "inline-block", transition: "background 0.15s" }}><span style={{ position: "absolute", left: showDeleted ? 15 : 2, top: 2, width: 13, height: 13, background: "#fff", borderRadius: "50%", transition: "left 0.15s" }} /></span>
+                  Silinen kayıtları göster
+                </div>
+              </>
+            )}
           </div>
         </div>
-
-        {/* SAG: kayitlar */}
+      ) : (
+        /* ===== GECMIS sekmesi ===== */
         <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Kayıtlar — {AYLAR_L[month - 1]} {year}</span>
-            <button onClick={openEntry} disabled={cats.length === 0} style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: cats.length === 0 ? "#8A867F" : C.ink, border: "none", padding: "8px 14px", borderRadius: 9, cursor: cats.length === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-plus" style={{ fontSize: 14, color: "#2EE06A" }} aria-hidden="true" />Kayıt Ekle</button>
-          </div>
-
-          <div style={{ background: accentBg, border: `0.5px solid ${kind === "expense" ? C.warnBorder : C.green}`, borderRadius: 11, padding: "12px 15px", marginBottom: 13, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, color: accent, fontWeight: 500 }}>Dönem toplam {kind === "expense" ? "gider" : "gelir"}{activeCat ? " (filtreli)" : ""}</span>
-            <span style={{ fontSize: 17, fontWeight: 600, color: accent }}>{fmtTL2L(shownEntries.reduce((a, e) => a + e.amount, 0))}</span>
-          </div>
-
-          {loading ? (
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 13 }}>Hareket Geçmişi</div>
+          {auditLoading ? (
             <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-          ) : shownEntries.length === 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "34px 0", color: C.textHint }}>
-              <i className="ti ti-notebook" style={{ fontSize: 24 }} aria-hidden="true" />
-              <span style={{ fontSize: 12.5 }}>Bu dönemde {kind === "expense" ? "gider" : "gelir"} kaydı yok.</span>
-              {cats.length > 0 && <button onClick={openEntry} style={{ fontSize: 11.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 600, marginTop: 2 }}>İlk kaydı ekle</button>}
+          ) : audit.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "40px 0", color: C.textHint }}>
+              <i className="ti ti-history" style={{ fontSize: 24 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Henüz işlem kaydı yok.</span>
             </div>
           ) : (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.8fr 1fr 30px", gap: 10, padding: "0 14px 7px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                <span>kategori</span><span>şube</span><span>tarih</span><span style={{ textAlign: "right" }}>tutar</span><span></span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                {shownEntries.map((e) => (
-                  <div key={e.id} style={{ background: C.bg, border: `0.5px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", display: "grid", gridTemplateColumns: "1.4fr 1fr 0.8fr 1fr 30px", gap: 10, alignItems: "center" }}>
-                    <div style={{ minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 500 }}>{e.category_name || cats.find((c) => c.id === e.category_id)?.name || "—"}</div>{e.note && <div style={{ fontSize: 10, color: C.textHint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.note}</div>}</div>
-                    <span style={{ fontSize: 11.5, color: C.textMuted }}>{branchName(e.branch_id)}</span>
-                    <span style={{ fontSize: 11.5, color: C.textMuted }}>{fmtDateShort(e.entry_date)}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, textAlign: "right", color: accent }}>{fmtTLL(e.amount)}</span>
-                    <i className="ti ti-trash" onClick={() => delEntry(e.id)} style={{ fontSize: 14, color: "#D4D0C8", margin: "0 auto", cursor: "pointer" }} aria-hidden="true" />
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 620 }}>
+              {audit.map((a) => {
+                const m = actionMeta(a.action);
+                return (
+                  <div key={a.id} style={{ background: C.bg, border: `0.5px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", display: "flex", alignItems: "flex-start", gap: 11 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: m.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className={`ti ${m.icon}`} style={{ fontSize: 14, color: m.color }} aria-hidden="true" /></div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+                        <span style={{ fontWeight: 600 }}>{m.label}</span>
+                        {a.action === "updated" && a.old_value && a.new_value ? (
+                          <span style={{ color: C.textMuted }}> · {a.old_value} <span style={{ color: C.textHint }}>→</span> {a.new_value}</span>
+                        ) : (
+                          <span style={{ color: C.textMuted }}> · {a.new_value || a.old_value || (a.amount != null ? fmtTLL(a.amount) : "")}</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 10, color: C.textHint, marginTop: 2 }}>{a.actor_name || "—"} · {fmtDateTime(a.created_at)}</div>
+                    </div>
                   </div>
-                ))}
-              </div>
-            </>
+                );
+              })}
+            </div>
           )}
         </div>
-      </div>
+      )}
 
       {/* KATEGORI YONET modal */}
       {showCatMgr && (
@@ -878,10 +984,11 @@ function LedgerPage({ token, companyId }: { token: string; companyId: string }) 
         </Modal>
       )}
 
-      {/* KAYIT EKLE modal */}
+      {/* KAYIT EKLE / DUZENLE modal */}
       {showEntry && (
-        <Modal title={`Yeni ${kind === "expense" ? "Gider" : "Gelir"} Kaydı`} onClose={() => setShowEntry(false)}>
+        <Modal title={editId ? `${kind === "expense" ? "Gider" : "Gelir"} Kaydını Düzenle` : `Yeni ${kind === "expense" ? "Gider" : "Gelir"} Kaydı`} onClose={() => setShowEntry(false)}>
           {entryErr && <div style={{ fontSize: 12, color: C.warnInk, background: C.warnBg, border: `0.5px solid ${C.warnBorder}`, borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>⚠ {entryErr}</div>}
+          {editId && <div style={{ fontSize: 10.5, color: C.textHint, background: C.surface, borderRadius: 8, padding: "8px 11px", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-shield-lock" style={{ fontSize: 13, color: C.franchise }} aria-hidden="true" />Değişiklik şifreyle onaylanır ve geçmişe kaydedilir.</div>}
           <div style={{ marginBottom: 11 }}>
             <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Kategori</label>
             <select value={entryForm.category_id} onChange={(e) => setEntryForm({ ...entryForm, category_id: e.target.value })} style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", background: "#fff" }}>
@@ -909,7 +1016,27 @@ function LedgerPage({ token, companyId }: { token: string; companyId: string }) 
             <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Not</label>
             <input value={entryForm.note} onChange={(e) => setEntryForm({ ...entryForm, note: e.target.value })} placeholder="Açıklama…" style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", boxSizing: "border-box" }} />
           </div>
-          <button onClick={saveEntry} style={{ width: "100%", fontSize: 12.5, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "10px", borderRadius: 9, cursor: "pointer" }}>Kaydet</button>
+          <button onClick={submitEntry} style={{ width: "100%", fontSize: 12.5, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "10px", borderRadius: 9, cursor: "pointer" }}>{editId ? "Devam Et (Şifre)" : "Kaydet"}</button>
+        </Modal>
+      )}
+
+      {/* SIFRE TEYIT modal (sil + duzenle) */}
+      {pwAction && (
+        <Modal title={pwAction.type === "delete" ? "Kaydı Sil" : "Değişikliği Onayla"} onClose={() => { if (!pwBusy) { setPwAction(null); setPwValue(""); } }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: pwAction.type === "delete" ? "#FBEAE8" : C.warnBg, display: "flex", alignItems: "center", justifyContent: "center" }}><i className={`ti ${pwAction.type === "delete" ? "ti-trash" : "ti-pencil"}`} style={{ fontSize: 17, color: pwAction.type === "delete" ? "#C0564B" : C.warnInk }} aria-hidden="true" /></div>
+            <div style={{ fontSize: 11, color: C.textMuted }}>Bu işlem geçmişe kaydedilir.</div>
+          </div>
+          <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 13, lineHeight: 1.5, background: C.surface, borderRadius: 8, padding: "9px 11px" }}>
+            {pwAction.entry.category_name || cats.find((c) => c.id === pwAction.entry.category_id)?.name || "Kayıt"} · {branchName(pwAction.entry.branch_id)} · {fmtTLL(pwAction.entry.amount)}{pwAction.type === "delete" ? " arşivlenecek." : " düzenlenecek."}
+          </div>
+          {pwErr && <div style={{ fontSize: 12, color: "#C0564B", background: "#FBEAE8", borderRadius: 8, padding: "8px 12px", marginBottom: 11 }}>⚠ {pwErr}</div>}
+          <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Hesap şifreniz</label>
+          <input type="password" value={pwValue} onChange={(e) => setPwValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") confirmPw(); }} placeholder="••••••••" autoFocus style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", boxSizing: "border-box", marginBottom: 14 }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { if (!pwBusy) { setPwAction(null); setPwValue(""); } }} style={{ flex: 1, fontSize: 12, fontWeight: 500, color: C.textMuted, background: C.neutralBg, border: "none", padding: "10px", borderRadius: 8, cursor: "pointer" }}>Vazgeç</button>
+            <button onClick={confirmPw} disabled={pwBusy} style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#fff", background: pwAction.type === "delete" ? "#C0564B" : C.green, border: "none", padding: "10px", borderRadius: 8, cursor: pwBusy ? "not-allowed" : "pointer" }}>{pwBusy ? "İşleniyor…" : pwAction.type === "delete" ? "Onayla & Sil" : "Onayla & Kaydet"}</button>
+          </div>
         </Modal>
       )}
     </>
