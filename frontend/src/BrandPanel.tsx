@@ -50,6 +50,7 @@ const NAV_ITEMS: { id: string; label: string; icon: string }[] = [
   { id: "inventory", label: "Envanter", icon: "ti-box" },
   { id: "payroll", label: "Bordro", icon: "ti-receipt" },
   { id: "finance", label: "Finans", icon: "ti-cash" },
+  { id: "ledger", label: "Gelir / Gider", icon: "ti-arrows-exchange" },
   { id: "reports", label: "Raporlar", icon: "ti-chart-bar" },
   { id: "announcements", label: "Duyurular", icon: "ti-bell" },
   { id: "settings", label: "Ayarlar", icon: "ti-settings" },
@@ -63,6 +64,7 @@ const PAGE_TITLE: Record<string, string> = {
   inventory: "Envanter",
   payroll: "Bordro",
   finance: "Finans",
+  ledger: "Gelir / Gider",
   reports: "Raporlar",
   announcements: "Duyurular",
   settings: "Ayarlar",
@@ -150,7 +152,8 @@ export default function BrandPanel({
           {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "inventory" && <InventoryPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "payroll" && <PayrollPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
-          {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && page !== "payroll" && <Placeholder title={PAGE_TITLE[page]} />}
+          {page === "ledger" && <LedgerPage token={token} companyId={user.company_id || ""} />}
+          {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && page !== "payroll" && page !== "ledger" && <Placeholder title={PAGE_TITLE[page]} />}
         </div>
       </main>
     </div>
@@ -632,6 +635,286 @@ function CompanyPage({ token, companyId, brandName }: { token: string; companyId
   );
 }
 
+
+// ============================================================================
+// Gelir / Gider — marka defteri. /finance/categories + /finance/entries
+// ============================================================================
+type LedgerBranch = { id: string; name: string };
+type FinCategory = { id: string; name: string; kind: string };
+type FinEntry = {
+  id: string; category_id: string; category_name?: string | null; kind: string;
+  amount: number; entry_date: string; branch_id?: string | null; note?: string | null;
+};
+const AYLAR_L = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+const fmtTL2L = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtTLL = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR");
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const fmtDateShort = (iso: string) => {
+  try { const d = new Date(iso + "T00:00:00"); return `${d.getDate()} ${AYLAR_L[d.getMonth()].slice(0, 3)}`; } catch { return iso; }
+};
+
+function LedgerPage({ token, companyId }: { token: string; companyId: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const today = new Date();
+  const [kind, setKind] = useState<"expense" | "income">("expense");
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [branches, setBranches] = useState<LedgerBranch[]>([]);
+  const [branchFilter, setBranchFilter] = useState<string>(""); // "" = tum subeler
+  const [cats, setCats] = useState<FinCategory[]>([]);
+  const [activeCat, setActiveCat] = useState<string>(""); // "" = tumu
+  const [entries, setEntries] = useState<FinEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // modallar
+  const [showCatMgr, setShowCatMgr] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [showEntry, setShowEntry] = useState(false);
+  const [entryForm, setEntryForm] = useState({ category_id: "", amount: "", entry_date: todayISO(), branch_id: "", note: "" });
+  const [entryErr, setEntryErr] = useState("");
+
+  const loadBranches = async () => {
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/branches?t=${Date.now()}`, { headers });
+      setBranches(r.data.map((b: any) => ({ id: b.id, name: b.name })));
+    } catch { setBranches([]); }
+  };
+  const loadCats = async () => {
+    try {
+      const r = await axios.get(`${API_URL}/finance/categories?kind=${kind}&t=${Date.now()}`, { headers });
+      setCats(r.data);
+    } catch { setCats([]); }
+  };
+  const loadEntries = async () => {
+    setLoading(true);
+    try {
+      let url = `${API_URL}/finance/entries?year=${year}&month=${month}&kind=${kind}&t=${Date.now()}`;
+      if (branchFilter) url += `&branch_id=${branchFilter}`;
+      const r = await axios.get(url, { headers });
+      setEntries(r.data);
+    } catch { setEntries([]); }
+    setLoading(false);
+  };
+
+  useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
+  useEffect(() => { loadCats(); setActiveCat(""); /* eslint-disable-next-line */ }, [kind]);
+  useEffect(() => { loadEntries(); /* eslint-disable-next-line */ }, [kind, year, month, branchFilter]);
+
+  const prevMonth = () => { if (month === 1) { setMonth(12); setYear(year - 1); } else setMonth(month - 1); };
+  const nextMonth = () => {
+    const atCur = year === today.getFullYear() && month === today.getMonth() + 1;
+    if (atCur) return;
+    if (month === 12) { setMonth(1); setYear(year + 1); } else setMonth(month + 1);
+  };
+  const atCurrent = year === today.getFullYear() && month === today.getMonth() + 1;
+
+  const addCat = async () => {
+    const name = newCatName.trim();
+    if (!name) return;
+    try {
+      await axios.post(`${API_URL}/finance/categories`, { name, kind }, { headers });
+      setNewCatName("");
+      await loadCats();
+    } catch { /* sessiz */ }
+  };
+  const delCat = async (id: string) => {
+    try { await axios.delete(`${API_URL}/finance/categories/${id}`, { headers }); await loadCats(); if (activeCat === id) setActiveCat(""); }
+    catch { /* sessiz */ }
+  };
+
+  const openEntry = () => {
+    setEntryErr("");
+    setEntryForm({ category_id: cats[0]?.id || "", amount: "", entry_date: todayISO(), branch_id: "", note: "" });
+    setShowEntry(true);
+  };
+  const saveEntry = async () => {
+    setEntryErr("");
+    if (!entryForm.category_id) { setEntryErr("Kategori seçin."); return; }
+    const amt = parseFloat(entryForm.amount);
+    if (!amt || amt <= 0) { setEntryErr("Geçerli bir tutar girin."); return; }
+    try {
+      await axios.post(`${API_URL}/finance/entries`, {
+        category_id: entryForm.category_id,
+        amount: amt,
+        entry_date: entryForm.entry_date || todayISO(),
+        branch_id: entryForm.branch_id || null,
+        note: entryForm.note.trim() || null,
+      }, { headers });
+      setShowEntry(false);
+      await loadEntries(); await loadCats();
+    } catch (e: any) { const d = e.response?.data?.detail; setEntryErr(typeof d === "string" ? d : "Kayıt eklenemedi."); }
+  };
+  const delEntry = async (id: string) => {
+    try { await axios.delete(`${API_URL}/finance/entries/${id}`, { headers }); await loadEntries(); }
+    catch { /* sessiz */ }
+  };
+
+  // kategori bazinda toplam (gosterilen entries'ten)
+  const catTotals: Record<string, number> = {};
+  entries.forEach((e) => { catTotals[e.category_id] = (catTotals[e.category_id] || 0) + e.amount; });
+  const periodTotal = entries.reduce((a, e) => a + e.amount, 0);
+  const shownEntries = activeCat ? entries.filter((e) => e.category_id === activeCat) : entries;
+  const branchName = (bid?: string | null) => bid ? (branches.find((b) => b.id === bid)?.name || "—") : "Marka geneli";
+
+  const accent = kind === "expense" ? C.warnInk : C.greenDark;
+  const accentBg = kind === "expense" ? C.warnBg : C.greenSoft;
+  const accentBorder = kind === "expense" ? C.warnBorder : C.green;
+
+  return (
+    <>
+      {/* baslik + donem + sube filtresi */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>Gelir / Gider</div>
+          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>Kategori tanımla, kayıt ekle. Finans özeti buradan beslenir.</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <div style={{ display: "flex", alignItems: "center", background: C.surface, border: "0.5px solid #E6E4DD", borderRadius: 9, overflow: "hidden" }}>
+            <button onClick={prevMonth} aria-label="Önceki ay" style={{ border: "none", background: "transparent", padding: "7px 10px", cursor: "pointer", color: C.textFaint, display: "flex" }}><i className="ti ti-chevron-left" style={{ fontSize: 14 }} aria-hidden="true" /></button>
+            <span style={{ fontSize: 12.5, fontWeight: 600, padding: "0 6px", minWidth: 100, textAlign: "center" }}>{AYLAR_L[month - 1]} {year}</span>
+            <button onClick={nextMonth} aria-label="Sonraki ay" style={{ border: "none", background: "transparent", padding: "7px 10px", cursor: atCurrent ? "not-allowed" : "pointer", color: atCurrent ? "#E0DDD6" : C.textFaint, display: "flex" }}><i className="ti ti-chevron-right" style={{ fontSize: 14 }} aria-hidden="true" /></button>
+          </div>
+          <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} style={{ fontSize: 12, border: "0.5px solid #E6E4DD", borderRadius: 9, padding: "7px 11px", background: C.surface, color: "#3C3A36" }}>
+            <option value="">Tüm şubeler</option>
+            <option value="__brand__" disabled>— marka geneli kayıtlar dahildir —</option>
+            {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* gelir/gider toggle */}
+      <div style={{ display: "inline-flex", background: C.neutralBg, borderRadius: 10, padding: 3, margin: "16px 0 18px" }}>
+        <div onClick={() => setKind("expense")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: kind === "expense" ? 600 : 500, color: kind === "expense" ? "#fff" : C.textFaint, background: kind === "expense" ? C.warnInk : "transparent", borderRadius: 8, cursor: "pointer" }}>Gider</div>
+        <div onClick={() => setKind("income")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: kind === "income" ? 600 : 500, color: kind === "income" ? "#fff" : C.textFaint, background: kind === "income" ? C.green : "transparent", borderRadius: 8, cursor: "pointer" }}>Gelir</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "0.75fr 1.7fr", gap: 18 }}>
+        {/* SOL: kategoriler */}
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
+            <span style={{ fontSize: 11, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>{kind === "expense" ? "Gider" : "Gelir"} Kategorileri</span>
+            <button onClick={() => setShowCatMgr(true)} style={{ fontSize: 10.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "4px 9px", borderRadius: 7, cursor: "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}><i className="ti ti-settings" style={{ fontSize: 12 }} aria-hidden="true" />Yönet</button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            <div onClick={() => setActiveCat("")} style={{ background: activeCat === "" ? C.bg : C.surface, border: activeCat === "" ? `1.5px solid ${accentBorder}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>Tümü</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{fmtTLL(periodTotal)}</span>
+            </div>
+            {cats.length === 0 ? (
+              <div style={{ fontSize: 11.5, color: C.textHint, padding: "14px 0", textAlign: "center" }}>Henüz kategori yok.</div>
+            ) : cats.map((c) => (
+              <div key={c.id} onClick={() => setActiveCat(c.id)} style={{ background: activeCat === c.id ? C.bg : C.surface, border: activeCat === c.id ? `1.5px solid ${accentBorder}` : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12.5, fontWeight: activeCat === c.id ? 600 : 400 }}>{c.name}</span>
+                <span style={{ fontSize: 12, color: catTotals[c.id] ? C.textMuted : C.textHint }}>{fmtTLL(catTotals[c.id] || 0)}</span>
+              </div>
+            ))}
+            <div onClick={() => setShowCatMgr(true)} style={{ background: C.surface, border: `0.5px dashed #E0DACE`, borderRadius: 11, padding: "10px 13px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: C.greenDark }}>
+              <i className="ti ti-plus" style={{ fontSize: 13 }} aria-hidden="true" /><span style={{ fontSize: 11.5, fontWeight: 500 }}>Kategori ekle</span>
+            </div>
+          </div>
+        </div>
+
+        {/* SAG: kayitlar */}
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Kayıtlar — {AYLAR_L[month - 1]} {year}</span>
+            <button onClick={openEntry} disabled={cats.length === 0} style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: cats.length === 0 ? "#8A867F" : C.ink, border: "none", padding: "8px 14px", borderRadius: 9, cursor: cats.length === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-plus" style={{ fontSize: 14, color: "#2EE06A" }} aria-hidden="true" />Kayıt Ekle</button>
+          </div>
+
+          <div style={{ background: accentBg, border: `0.5px solid ${kind === "expense" ? C.warnBorder : C.green}`, borderRadius: 11, padding: "12px 15px", marginBottom: 13, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 12, color: accent, fontWeight: 500 }}>Dönem toplam {kind === "expense" ? "gider" : "gelir"}{activeCat ? " (filtreli)" : ""}</span>
+            <span style={{ fontSize: 17, fontWeight: 600, color: accent }}>{fmtTL2L(shownEntries.reduce((a, e) => a + e.amount, 0))}</span>
+          </div>
+
+          {loading ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+          ) : shownEntries.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "34px 0", color: C.textHint }}>
+              <i className="ti ti-notebook" style={{ fontSize: 24 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Bu dönemde {kind === "expense" ? "gider" : "gelir"} kaydı yok.</span>
+              {cats.length > 0 && <button onClick={openEntry} style={{ fontSize: 11.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 600, marginTop: 2 }}>İlk kaydı ekle</button>}
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.8fr 1fr 30px", gap: 10, padding: "0 14px 7px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                <span>kategori</span><span>şube</span><span>tarih</span><span style={{ textAlign: "right" }}>tutar</span><span></span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                {shownEntries.map((e) => (
+                  <div key={e.id} style={{ background: C.bg, border: `0.5px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", display: "grid", gridTemplateColumns: "1.4fr 1fr 0.8fr 1fr 30px", gap: 10, alignItems: "center" }}>
+                    <div style={{ minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 500 }}>{e.category_name || cats.find((c) => c.id === e.category_id)?.name || "—"}</div>{e.note && <div style={{ fontSize: 10, color: C.textHint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.note}</div>}</div>
+                    <span style={{ fontSize: 11.5, color: C.textMuted }}>{branchName(e.branch_id)}</span>
+                    <span style={{ fontSize: 11.5, color: C.textMuted }}>{fmtDateShort(e.entry_date)}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, textAlign: "right", color: accent }}>{fmtTLL(e.amount)}</span>
+                    <i className="ti ti-trash" onClick={() => delEntry(e.id)} style={{ fontSize: 14, color: "#D4D0C8", margin: "0 auto", cursor: "pointer" }} aria-hidden="true" />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* KATEGORI YONET modal */}
+      {showCatMgr && (
+        <Modal title={`${kind === "expense" ? "Gider" : "Gelir"} Kategorileri`} onClose={() => setShowCatMgr(false)}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <input value={newCatName} onChange={(e) => setNewCatName(e.target.value)} placeholder={kind === "expense" ? "Kira, Reklam, Nakliye…" : "Royalty, Kira geliri…"} onKeyDown={(e) => { if (e.key === "Enter") addCat(); }} style={{ flex: 1, fontSize: 13, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 12px" }} />
+            <button onClick={addCat} style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "9px 16px", borderRadius: 8, cursor: "pointer" }}>Ekle</button>
+          </div>
+          {cats.length === 0 ? (
+            <div style={{ fontSize: 12, color: C.textHint, padding: "10px 0", textAlign: "center" }}>Henüz kategori yok. Yukarıdan ekleyin.</div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {cats.map((c) => (
+                <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 7, background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: 9, padding: "7px 11px" }}>
+                  <span style={{ fontSize: 12.5 }}>{c.name}</span>
+                  <i className="ti ti-x" onClick={() => delCat(c.id)} style={{ fontSize: 13, color: C.textHint, cursor: "pointer" }} aria-hidden="true" />
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: 10.5, color: C.textHint, marginTop: 13, lineHeight: 1.5 }}>Kategori silinince kayıtları silinmez; kayıtlar kategori bağı korunarak kalır.</div>
+        </Modal>
+      )}
+
+      {/* KAYIT EKLE modal */}
+      {showEntry && (
+        <Modal title={`Yeni ${kind === "expense" ? "Gider" : "Gelir"} Kaydı`} onClose={() => setShowEntry(false)}>
+          {entryErr && <div style={{ fontSize: 12, color: C.warnInk, background: C.warnBg, border: `0.5px solid ${C.warnBorder}`, borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>⚠ {entryErr}</div>}
+          <div style={{ marginBottom: 11 }}>
+            <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Kategori</label>
+            <select value={entryForm.category_id} onChange={(e) => setEntryForm({ ...entryForm, category_id: e.target.value })} style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", background: "#fff" }}>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 11 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Tutar (₺)</label>
+              <input type="number" value={entryForm.amount} onChange={(e) => setEntryForm({ ...entryForm, amount: e.target.value })} placeholder="0,00" style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Tarih</label>
+              <input type="date" value={entryForm.entry_date} onChange={(e) => setEntryForm({ ...entryForm, entry_date: e.target.value })} style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", boxSizing: "border-box" }} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 11 }}>
+            <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Şube <span style={{ color: C.textHint }}>(boş = marka geneli)</span></label>
+            <select value={entryForm.branch_id} onChange={(e) => setEntryForm({ ...entryForm, branch_id: e.target.value })} style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", background: "#fff" }}>
+              <option value="">Marka geneli</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 11, color: C.textMuted, display: "block", marginBottom: 4 }}>Not</label>
+            <input value={entryForm.note} onChange={(e) => setEntryForm({ ...entryForm, note: e.target.value })} placeholder="Açıklama…" style={{ width: "100%", fontSize: 12.5, border: `0.5px solid ${C.border}`, borderRadius: 8, padding: "9px 11px", boxSizing: "border-box" }} />
+          </div>
+          <button onClick={saveEntry} style={{ width: "100%", fontSize: 12.5, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "10px", borderRadius: 9, cursor: "pointer" }}>Kaydet</button>
+        </Modal>
+      )}
+    </>
+  );
+}
 
 // ============================================================================
 // Bordro — donem bazli sube bordrosu. /payroll/branch + /payroll/run-branch

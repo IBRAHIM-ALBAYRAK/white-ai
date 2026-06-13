@@ -33,11 +33,16 @@ class FinanceEntryCreateSchema(BaseModel):
 
 
 class FinanceEntryUpdateSchema(BaseModel):
+    admin_password: str
     category_id: Optional[str] = None
     amount: Optional[float] = None
     entry_date: Optional[date] = None
     branch_id: Optional[str] = None
     note: Optional[str] = None
+
+
+class FinanceEntryDeleteSchema(BaseModel):
+    admin_password: str
 
 
 class FinanceEntryResponseSchema(BaseModel):
@@ -51,10 +56,24 @@ class FinanceEntryResponseSchema(BaseModel):
     branch_id: Optional[str] = None
     note: Optional[str] = None
     created_at: datetime
+    is_deleted: bool = False
     model_config = {"from_attributes": True}
 
 
-# ── Overview (Finans Genel Bakis besler) ──
+# ── Audit log ──
+class FinanceAuditLogResponseSchema(BaseModel):
+    id: str
+    action: str               # created | updated | deleted
+    kind: Optional[str] = None
+    amount: Optional[float] = None
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    actor_name: Optional[str] = None
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+# ── Overview ──
 class CategorySumSchema(BaseModel):
     category_id: str
     name: str
@@ -65,18 +84,15 @@ class CategorySumSchema(BaseModel):
 class FinanceOverviewSchema(BaseModel):
     year: int
     month: int
-    # otomatik kalemler (sistemden)
-    shipment_income: float          # subelere sevkiyat geliri (stock_transfers)
-    franchise_shipment_income: float  # sadece franchise'a sevk
-    payroll_cost: float             # bordro employer_cost toplam
-    warehouse_value: float          # depo stok degeri
+    shipment_income: float
+    franchise_shipment_income: float
+    payroll_cost: float
+    warehouse_value: float
     active_franchise_count: int
-    # manuel defter (finance_entries)
     manual_income: float
     manual_expense: float
     income_categories: List[CategorySumSchema]
     expense_categories: List[CategorySumSchema]
-    # toplamlar
     total_income: float
     total_expense: float
     net: float
