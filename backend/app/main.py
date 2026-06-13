@@ -20,6 +20,7 @@ from app.modules.auth import models as auth_models
 from app.modules.company import models as company_models
 from app.modules.workforce import models as workforce_models
 from app.modules.inventory import models as inventory_models
+from app.modules.finance import models as finance_models
 from app.modules.timeclock import models as timeclock_models
 from app.modules.employees import models as employee_models
 from app.modules.employee_portal.leaves import models as leaves_models
@@ -33,6 +34,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.company.router import router as company_router
 from app.modules.workforce.router import router as workforce_router
 from app.modules.inventory.router import router as inventory_router
+from app.modules.finance.router import router as finance_router
 from app.modules.inventory.change_request_router import router as inventory_change_request_router
 from app.modules.timeclock.router import router as timeclock_router
 from app.modules.users.router import router as users_router
@@ -98,6 +100,7 @@ app.include_router(announcements_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(shift_swaps_router, prefix="/api/v1")
 app.include_router(payroll_router, prefix="/api/v1")
+app.include_router(finance_router, prefix="/api/v1")
 
 
 @app.get("/")

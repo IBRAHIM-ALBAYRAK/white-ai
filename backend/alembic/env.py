@@ -36,6 +36,7 @@ from app.modules.employee_portal.announcements import models as announcements_mo
 from app.modules.employee_portal.documents import models as documents_models          # noqa: F401
 from app.modules.employee_portal.shift_swaps import models as shift_swaps_models      # noqa: F401
 from app.modules.payroll import models as payroll_models                              # noqa: F401
+from app.modules.finance import models as finance_models                              # noqa: F401
 
 # Alembic Config object (reads alembic.ini).
 config = context.config
