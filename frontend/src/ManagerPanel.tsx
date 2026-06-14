@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 
 // ============================================================================
 // WHITE.AI — Şube Yöneticisi Paneli (Panel: Manager)
@@ -151,6 +152,8 @@ export default function ManagerPanel({
             ? <ManagerOverview token={token} branchId={branchId} firstName={user.first_name} />
             : page === "staff"
             ? <ManagerStaff token={token} branchId={branchId} companyId={user.company_id || ""} branchName={subeAdi} />
+            : page === "payroll"
+            ? <ManagerBordro token={token} branchId={branchId} branchName={subeAdi} />
             : <Placeholder title={PAGE_TITLE[page]} branchId={branchId} />}
         </div>
       </main>
@@ -350,7 +353,6 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
   const [termPw, setTermPw] = useState("");
   const [showTerm, setShowTerm] = useState(false);
 
-
   const loadEmployees = async () => {
     if (!branchId) { setLoading(false); return; }
     setLoading(true);
@@ -426,7 +428,6 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
     try { await axios.put(`${API_URL}/employees/${emp.id}/reactivate`, {}, { headers }); await loadEmployees(); }
     catch { /* */ }
   };
-
 
   const fmtMoney = (n?: number | null) => n != null ? "₺" + Number(n).toLocaleString("tr-TR") : "—";
   const hasLogin = (e: Emp) => !!e.user_id;
@@ -721,6 +722,256 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
       <span style={{ color: C.textFaint }}>{label}</span>
       <span style={{ color: C.ink, fontWeight: 500 }}>{value}</span>
+    </div>
+  );
+}
+
+// ============================================================================
+// Manager Bordro — ay nav + siyah ozet + tablo (tiklanabilir) +
+// sol sube-toplam bar (sabit) + sag secili-kisi donut. Tek sube, izolasyonlu.
+// ============================================================================
+type Payslip = {
+  id: string; employee_id: string; year: number; month: number; sgk_days: number;
+  full_monthly_gross: number; gross: number; sgk_base: number; sgk_employee: number;
+  unemployment_employee: number; income_tax_base: number; cumulative_base_before: number;
+  cumulative_base_after: number; income_tax_gross: number; income_tax_exemption: number;
+  income_tax_net: number; stamp_tax_gross: number; stamp_tax_exemption: number;
+  stamp_tax_net: number; net_salary: number; sgk_employer: number;
+  unemployment_employer: number; employer_cost: number;
+};
+type Row = {
+  employee_id: string; first_name: string; last_name: string;
+  position?: string | null; base_salary?: number | null; payslip?: Payslip | null;
+};
+
+const AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+
+function ManagerBordro({ token, branchId, branchName }: { token: string; branchId: string; branchName: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null); // secili employee_id (donut icin)
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    if (!branchId) { setLoading(false); return; }
+    setLoading(true); setErr("");
+    try {
+      const r = await axios.get(`${API_URL}/payroll/branch/${branchId}/${year}/${month}?t=${Date.now()}`, { headers });
+      setRows(Array.isArray(r.data) ? r.data : []);
+    } catch (e: any) { setRows([]); setErr(e.response?.data?.detail || "Bordro yüklenemedi."); }
+    setLoading(false);
+    setSelected(null);
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [branchId, token, year, month]);
+
+  const runPayroll = async () => {
+    setRunning(true); setErr("");
+    try {
+      await axios.post(`${API_URL}/payroll/run-branch`, { branch_id: branchId, year, month }, { headers });
+      await load();
+    } catch (e: any) { setErr(e.response?.data?.detail || "Bordro hesaplanamadı."); }
+    setRunning(false);
+  };
+
+  const prevMonth = () => { if (month === 1) { setMonth(12); setYear(year - 1); } else setMonth(month - 1); };
+  const nextLocked = year > now.getFullYear() || (year === now.getFullYear() && month >= now.getMonth() + 1);
+  const nextMonth = () => { if (nextLocked) return; if (month === 12) { setMonth(1); setYear(year + 1); } else setMonth(month + 1); };
+
+  const fmt = (n?: number | null) => n != null ? "₺" + Math.round(n).toLocaleString("tr-TR") : "—";
+
+  const slips = rows.map((r) => r.payslip).filter(Boolean) as Payslip[];
+  const sumEmployer = slips.reduce((a, p) => a + (p.employer_cost || 0), 0);
+  const sumGross = slips.reduce((a, p) => a + (p.gross || 0), 0);
+  const sumNet = slips.reduce((a, p) => a + (p.net_salary || 0), 0);
+  const sumSgk = slips.reduce((a, p) => a + (p.sgk_employee || 0) + (p.unemployment_employee || 0), 0);
+  const sumIncome = slips.reduce((a, p) => a + (p.income_tax_net || 0), 0);
+  const sumStamp = slips.reduce((a, p) => a + (p.stamp_tax_net || 0), 0);
+  const sumState = sumSgk + sumIncome + sumStamp;
+
+  // sol grafik: sube toplam 5 kalem
+  const barData = [
+    { name: "Brüt", value: Math.round(sumGross), color: "#0A0A0A" },
+    { name: "Net", value: Math.round(sumNet), color: "#22C55E" },
+    { name: "SGK+İşsz.", value: Math.round(sumSgk), color: "#185FA5" },
+    { name: "Gelir V.", value: Math.round(sumIncome), color: "#C68A12" },
+    { name: "Damga V.", value: Math.round(sumStamp), color: "#A6A29B" },
+  ];
+
+  // sag grafik: secili kisi varsa onun, yoksa sube geneli
+  const selRow = selected ? rows.find((r) => r.employee_id === selected) : null;
+  const selSlip = selRow?.payslip || null;
+  const donutSource = selSlip
+    ? { net: selSlip.net_salary, sgk: (selSlip.sgk_employee + selSlip.unemployment_employee), income: selSlip.income_tax_net, stamp: selSlip.stamp_tax_net, gross: selSlip.gross }
+    : { net: sumNet, sgk: sumSgk, income: sumIncome, stamp: sumStamp, gross: sumGross };
+  const donutData = [
+    { name: "Net maaş", value: Math.round(donutSource.net), color: "#22C55E" },
+    { name: "SGK + işsizlik", value: Math.round(donutSource.sgk), color: "#185FA5" },
+    { name: "Gelir vergisi", value: Math.round(donutSource.income), color: "#C68A12" },
+    { name: "Damga vergisi", value: Math.round(donutSource.stamp), color: "#A6A29B" },
+  ].filter((d) => d.value > 0);
+  const netPct = donutSource.gross > 0 ? Math.round((donutSource.net / donutSource.gross) * 100) : 0;
+  const donutTitle = selRow ? `${selRow.first_name} ${selRow.last_name} · kırılım` : "Brüt nereye gidiyor?";
+
+  const calcCount = slips.length;
+  const totalCount = rows.length;
+
+  return (
+    <>
+      <div style={{ background: "#0A0A0A", borderRadius: 13, padding: "18px 22px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 11, background: "rgba(34,197,94,0.13)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className="ti ti-receipt" style={{ fontSize: 22, color: "#2EE06A" }} aria-hidden="true" /></div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 21, fontWeight: 700, color: "#fff", letterSpacing: "-0.02em" }}>Bordro</div>
+            <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branchName} · maaş hesaplaması</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 11, background: "rgba(255,255,255,0.08)", borderRadius: 9, padding: "6px 12px" }}>
+            <i className="ti ti-chevron-left" style={{ fontSize: 16, color: "#fff", cursor: "pointer" }} onClick={prevMonth} aria-hidden="true" />
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", minWidth: 96, textAlign: "center" }}>{AYLAR[month - 1]} {year}</span>
+            <i className="ti ti-chevron-right" style={{ fontSize: 16, color: nextLocked ? "#5A5A57" : "#fff", cursor: nextLocked ? "not-allowed" : "pointer" }} onClick={nextMonth} aria-hidden="true" />
+          </div>
+          <button onClick={runPayroll} disabled={running || totalCount === 0} style={{ display: "inline-flex", alignItems: "center", gap: 7, background: running || totalCount === 0 ? "rgba(255,255,255,0.1)" : "#22C55E", color: running || totalCount === 0 ? "#7A7A78" : "#0A0A0A", border: "none", borderRadius: 9, padding: "9px 15px", fontSize: 12.5, fontWeight: 700, cursor: running || totalCount === 0 ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+            <i className="ti ti-calculator" style={{ fontSize: 16 }} aria-hidden="true" />{running ? "Hesaplanıyor…" : "Bordroyu hesapla"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ background: "#0A0A0A", borderRadius: 13, padding: "18px 22px", marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 1, background: "rgba(255,255,255,0.07)", borderRadius: 10, overflow: "hidden" }}>
+          <OzetHucre label="İşveren maliyeti" value={fmt(sumEmployer)} />
+          <OzetHucre label="Toplam brüt" value={fmt(sumGross)} />
+          <OzetHucre label="Toplam net" value={fmt(sumNet)} green />
+          <OzetHucre label="Devlete giden" value={fmt(sumState)} />
+        </div>
+      </div>
+
+      {err && <div style={{ fontSize: 12.5, color: C.dangerInk, marginBottom: 12, padding: "10px 14px", background: C.dangerBg, borderRadius: 9 }}>{err}</div>}
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>Yükleniyor…</div>
+      ) : totalCount === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>Bu şubede aktif çalışan yok.</div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 0.9fr", gap: 11, padding: "0 14px 9px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            <span>çalışan</span><span>brüt</span><span>kesinti</span><span>net</span><span>durum</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 20 }}>
+            {rows.map((r) => {
+              const ini = ((r.first_name?.[0] || "") + (r.last_name?.[0] || "")).toUpperCase();
+              const p = r.payslip;
+              const kesinti = p ? (p.gross - p.net_salary) : null;
+              const isSel = selected === r.employee_id;
+              return (
+                <div key={r.employee_id} onClick={() => p && setSelected(isSel ? null : r.employee_id)} style={{ background: "#fff", border: isSel ? "1.5px solid #22C55E" : `0.5px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 0.9fr", gap: 11, alignItems: "center", cursor: p ? "pointer" : "default" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: p ? C.greenSoft : C.neutralBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, color: p ? C.greenDark : C.textHint, flexShrink: 0 }}>{ini || "–"}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: C.ink }}>{r.first_name} {r.last_name}</div>
+                      <div style={{ fontSize: 10.5, color: C.textHint }}>{r.position || "—"}</div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 12.5, color: p ? C.ink : C.textHint }}>{p ? fmt(p.gross) : fmt(r.base_salary)}</span>
+                  <span style={{ fontSize: 12.5, color: kesinti != null ? C.dangerInk : C.textHint }}>{kesinti != null ? "−" + fmt(kesinti) : "—"}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: p ? C.greenDark : C.textHint }}>{p ? fmt(p.net_salary) : "—"}</span>
+                  <span>{p
+                    ? <span style={{ fontSize: 10, fontWeight: 600, color: C.greenDark, background: C.greenSoft, padding: "3px 8px", borderRadius: 6 }}>Hesaplandı</span>
+                    : <span style={{ fontSize: 10, fontWeight: 600, color: C.warnInk, background: C.warnBg, padding: "3px 8px", borderRadius: 6 }}>Bekliyor</span>}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* === IKI GRAFIK === */}
+      {calcCount > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 12 }}>
+          {/* SOL: sube toplam 5 sutun */}
+          <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 13, padding: "18px 20px" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 3 }}>Şube toplam kalemler</div>
+            <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 16 }}>{AYLAR[month - 1]} {year} · tüm ekip toplamı</div>
+            <div style={{ width: "100%", height: 210 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barData} margin={{ top: 6, right: 6, bottom: 6, left: -8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F2F1ED" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10.5, fill: "#6B6862" }} axisLine={false} tickLine={false} interval={0} />
+                  <YAxis tick={{ fontSize: 9, fill: "#A6A29B" }} axisLine={false} tickLine={false} tickFormatter={(v) => v >= 1000 ? (v / 1000) + "B" : String(v)} />
+                  <Bar dataKey="value" radius={[5, 5, 0, 0]}>
+                    {barData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* SAG: secili kisi / sube donut */}
+          <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 13, padding: "18px 20px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>{donutTitle}</div>
+              {selRow && <span onClick={() => setSelected(null)} style={{ fontSize: 10.5, color: C.greenDark, background: C.greenSoft, padding: "3px 9px", borderRadius: 6, cursor: "pointer" }}>↩ Tüm şube</span>}
+            </div>
+            <div style={{ fontSize: 11.5, color: C.textFaint, marginBottom: 16 }}>{fmt(donutSource.gross)} brüt</div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+              <div style={{ position: "relative", width: 128, height: 128 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={donutData} dataKey="value" innerRadius={45} outerRadius={62} startAngle={90} endAngle={-270} stroke="none">
+                      {donutData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center" }}>
+                  <div style={{ fontSize: 9, color: C.textFaint }}>Net</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.ink }}>%{netPct}</div>
+                </div>
+              </div>
+              <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 9 }}>
+                {donutData.map((d, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 3, background: d.color }} />
+                      <span style={{ fontSize: 11.5, color: "#3C3A36" }}>{d.name}</span>
+                    </div>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: C.ink }}>{fmt(d.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 14, padding: "11px 14px", background: C.neutralBg, borderRadius: 9, display: "flex", alignItems: "center", gap: 9 }}>
+        <i className="ti ti-pointer" style={{ fontSize: 14, color: C.textMuted, flexShrink: 0 }} aria-hidden="true" />
+        <span style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>Tablodan bir çalışana tıkla → sağdaki donut o kişinin kırılımı. <span style={{ color: C.greenDark, fontWeight: 600 }}>Tüm şube</span> ile geneli gör. <span style={{ color: C.greenDark, fontWeight: 600 }}>Bordroyu hesapla</span> ile bekleyenleri işle.</span>
+      </div>
+    </>
+  );
+}
+
+function OzetHucre({ label, value, green }: { label: string; value: string; green?: boolean }) {
+  return (
+    <div style={{ background: "#0A0A0A", padding: "14px 16px" }}>
+      <div style={{ fontSize: 11, color: "#7A7A78" }}>{label}</div>
+      <div style={{ fontSize: 21, fontWeight: 700, color: green ? "#2EE06A" : "#fff", marginTop: 3 }}>{value}</div>
+    </div>
+  );
+}
+
+function BordroBarTooltip({ active, payload }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0];
+  return (
+    <div style={{ background: "#0A0A0A", color: "#fff", borderRadius: 8, padding: "7px 11px", fontSize: 11.5 }}>
+      <div style={{ color: "#9CA3AF", marginBottom: 2 }}>{p.payload.name}</div>
+      <div style={{ fontWeight: 700 }}>₺{Math.round(p.value).toLocaleString("tr-TR")}</div>
     </div>
   );
 }

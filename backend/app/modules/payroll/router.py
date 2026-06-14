@@ -85,6 +85,9 @@ async def _assert_own_branch(db: AsyncSession, current_user: User, branch_id: st
         raise HTTPException(status_code=404, detail="Branch not found.")
     if current_user.role != UserRole.SUPERADMIN and branch.company_id != current_user.company_id:
         raise HTTPException(status_code=403, detail="Payroll is outside oversight scope.")
+    # Manager yalnizca KENDI subesinin bordrosunu gorebilir
+    if current_user.role == UserRole.MANAGER and branch.id != current_user.branch_id:
+        raise HTTPException(status_code=403, detail="Sadece kendi subenizin bordrosuna erisebilirsiniz.")
     return branch
 
 
