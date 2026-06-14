@@ -314,21 +314,23 @@ function NabizKart({ icon, iconBg, iconColor, label, value, sub, valueColor }: {
 }
 
 // ============================================================================
-// Manager Personel — kendi subesinin calisanlari. Tam yetki (ekle/duzenle/cikar).
-// branch_id otomatik manager'in subesi. Backend izolasyonu guvenli.
+// Manager Personel — dark hero + gomulu istatistik + departman filtresi +
+// mesaide gostergesi + giris sutunu. Tam yetki (ekle/duzenle/cikar), tek sube.
 // ============================================================================
 type Emp = {
   id: string; first_name: string; last_name: string; email?: string | null;
   phone?: string | null; position?: string | null; department?: string | null;
   base_salary?: number | null; bank_iban?: string | null; contract_type?: string | null;
-  is_active: boolean;
+  is_active: boolean; user_id?: string | null;
 };
 
 function ManagerStaff({ token, branchId, companyId, branchName }: { token: string; branchId: string; companyId: string; branchName: string }) {
   const headers = { Authorization: `Bearer ${token}` };
   const [employees, setEmployees] = useState<Emp[]>([]);
+  const [onDutyIds, setOnDutyIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"active" | "inactive">("active");
+  const [dept, setDept] = useState<string>("__all__");
   const [search, setSearch] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -336,6 +338,10 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "", create_user_account: false, password: "" });
   const [formErr, setFormErr] = useState("");
+  const [deptOpen, setDeptOpen] = useState(false);
+  const [showNewDept, setShowNewDept] = useState(false);
+  const [newDept, setNewDept] = useState("");
+  const [extraDepts, setExtraDepts] = useState<string[]>([]);
 
   // detay/duzenle modal
   const [detail, setDetail] = useState<Emp | null>(null);
@@ -344,6 +350,7 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
   const [termPw, setTermPw] = useState("");
   const [showTerm, setShowTerm] = useState(false);
 
+
   const loadEmployees = async () => {
     if (!branchId) { setLoading(false); return; }
     setLoading(true);
@@ -351,6 +358,12 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
       const r = await axios.get(`${API_URL}/employees/branch/${branchId}?t=${Date.now()}`, { headers });
       setEmployees(Array.isArray(r.data) ? r.data : []);
     } catch { setEmployees([]); }
+    // mesaide olanlar (acik mesai)
+    try {
+      const o = await axios.get(`${API_URL}/timeclock/branch/${branchId}/open?t=${Date.now()}`, { headers });
+      const ids = new Set<string>((Array.isArray(o.data) ? o.data : []).map((r: any) => r.employee_id).filter(Boolean));
+      setOnDutyIds(ids);
+    } catch { setOnDutyIds(new Set()); }
     setLoading(false);
   };
   useEffect(() => { loadEmployees(); /* eslint-disable-next-line */ }, [branchId, token]);
@@ -358,14 +371,10 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
   const addEmployee = async () => {
     setFormErr("");
     if (!form.first_name || !form.last_name) { setFormErr("Ad ve soyad zorunlu."); return; }
-    if (form.create_user_account) {
-      if (!form.email) { setFormErr("Giriş hesabı için e-posta zorunlu."); return; }
-      if (!form.password || form.password.length < 8) { setFormErr("Şifre en az 8 karakter olmalı."); return; }
-    }
+    if (!form.email) { setFormErr("E-posta zorunlu (çalışan panele giriş için)."); return; }
+    if (!form.password || form.password.length < 8) { setFormErr("Şifre en az 8 karakter olmalı."); return; }
     try {
-      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId, branch_id: branchId };
-      if (form.email) payload.email = form.email;
-      if (form.create_user_account) { payload.create_user_account = true; payload.password = form.password; payload.role = "employee"; }
+      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId, branch_id: branchId, email: form.email, create_user_account: true, password: form.password, role: "employee" };
       if (form.phone) payload.phone = form.phone;
       if (form.position) payload.position = form.position;
       if (form.department) payload.department = form.department;
@@ -413,69 +422,133 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
     }
   };
 
+  const reactivate = async (emp: Emp) => {
+    try { await axios.put(`${API_URL}/employees/${emp.id}/reactivate`, {}, { headers }); await loadEmployees(); }
+    catch { /* */ }
+  };
+
+
   const fmtMoney = (n?: number | null) => n != null ? "₺" + Number(n).toLocaleString("tr-TR") : "—";
+  const hasLogin = (e: Emp) => !!e.user_id;
+
+  // istatistikler
+  const activeAll = employees.filter((e) => e.is_active !== false);
+  const totalCount = employees.length;
+  const activeCount = activeAll.length;
+  const onDutyCount = activeAll.filter((e) => onDutyIds.has(e.id)).length;
+  const loginCount = activeAll.filter(hasLogin).length;
+  const payrollTotal = activeAll.reduce((a, e) => a + (e.base_salary || 0), 0);
+
+  // departman listesi (dinamik)
+  const deptMap = new Map<string, number>();
+  activeAll.forEach((e) => {
+    const d = (e.department && e.department.trim()) ? e.department.trim() : "__none__";
+    deptMap.set(d, (deptMap.get(d) || 0) + 1);
+  });
+  const deptChips = Array.from(deptMap.entries());
+  // dropdown icin: mevcut departmanlar (calisanlardan) + bu oturumda eklenenler
+  const allDepts = Array.from(new Set([
+    ...employees.map((e) => (e.department || "").trim()).filter(Boolean),
+    ...extraDepts,
+  ]));
+
+  // filtre
   const filtered = employees.filter((e) => {
     const okTab = tab === "active" ? e.is_active !== false : e.is_active === false;
+    const eDept = (e.department && e.department.trim()) ? e.department.trim() : "__none__";
+    const okDept = dept === "__all__" || eDept === dept;
     const q = search.trim().toLowerCase();
     const okSearch = !q || `${e.first_name} ${e.last_name} ${e.position || ""}`.toLowerCase().includes(q);
-    return okTab && okSearch;
+    return okTab && okDept && okSearch;
   });
-  const activeCount = employees.filter((e) => e.is_active !== false).length;
 
   const labelStyle: any = { display: "block", fontSize: 11, color: C.textMuted, marginBottom: 5, fontWeight: 500 };
   const inputStyle: any = { width: "100%", padding: "8px 11px", fontSize: 13, border: `1px solid ${C.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box", background: "#fff", color: C.ink };
-  const greenBtn: any = { display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" };
+  const cols = "1.6fr 1fr 1fr 0.9fr 0.8fr 56px";
 
   return (
     <>
-      {/* baslik + ekle */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: C.ink }}>Personel</div>
-          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{branchName} ekibi · {activeCount} aktif çalışan</div>
+      {/* === DARK HERO === */}
+      <div style={{ background: "#0A0A0A", borderRadius: 13, padding: "18px 22px", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+            <div style={{ width: 42, height: 42, borderRadius: 11, background: "rgba(34,197,94,0.13)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className="ti ti-users" style={{ fontSize: 22, color: "#2EE06A" }} aria-hidden="true" /></div>
+            <div>
+              <div style={{ fontSize: 21, fontWeight: 700, color: "#fff", letterSpacing: "-0.02em" }}>Personel</div>
+              <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 1 }}>{branchName} ekibi</div>
+            </div>
+          </div>
+          <button onClick={() => { setShowAdd(true); setFormErr(""); }} style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#22C55E", color: "#0A0A0A", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}><i className="ti ti-plus" style={{ fontSize: 16 }} aria-hidden="true" />Personel ekle</button>
         </div>
-        <button style={greenBtn} onClick={() => { setShowAdd(true); setFormErr(""); }}><i className="ti ti-plus" style={{ fontSize: 15, color: C.green }} aria-hidden="true" />Personel Ekle</button>
       </div>
 
-      {/* arama + filtre */}
-      <div style={{ display: "flex", gap: 9, marginBottom: 14 }}>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, padding: "8px 12px" }}>
-          <i className="ti ti-search" style={{ fontSize: 14, color: C.textHint }} aria-hidden="true" />
+      {/* === ISTATISTIK KARTLARI (3 beyaz + 1 siyah bordro) === */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 16 }}>
+        <StatCard label="Toplam" value={String(totalCount)} />
+        <StatCard label="Aktif" value={String(activeCount)} green />
+        <StatCard label="Şu an mesaide" value={String(onDutyCount)} />
+        <StatCard label="Aylık bordro" value={"₺" + payrollTotal.toLocaleString("tr-TR")} dark />
+      </div>
+
+      {/* === DEPARTMAN FILTRESI === */}
+      <div style={{ display: "flex", gap: 7, marginBottom: 13, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: "#2EE06A", background: "#0A0A0A", padding: "6px 12px", borderRadius: 20 }}>Departman</span>
+        <DeptChip label="Tümü" count={activeAll.length} active={dept === "__all__"} onClick={() => setDept("__all__")} />
+        {deptChips.map(([d, n]) => (
+          <DeptChip key={d} label={d === "__none__" ? "Atanmamış" : d} count={n} active={dept === d} onClick={() => setDept(d)} />
+        ))}
+      </div>
+
+      {/* === ARAMA + AKTIF/AYRILAN === */}
+      <div style={{ display: "flex", gap: 9, marginBottom: 13 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, padding: "9px 12px" }}>
+          <i className="ti ti-search" style={{ fontSize: 15, color: C.textHint }} aria-hidden="true" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="İsim veya pozisyon ara…" style={{ border: "none", outline: "none", fontSize: 12.5, flex: 1, background: "transparent", color: C.ink }} />
         </div>
         <div style={{ display: "inline-flex", gap: 2, background: C.neutralBg, borderRadius: 9, padding: 3 }}>
           {(["active", "inactive"] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)} style={{ padding: "7px 13px", fontSize: 12, fontWeight: tab === t ? 600 : 400, color: tab === t ? C.ink : C.textFaint, background: tab === t ? "#fff" : "transparent", border: "none", borderRadius: 7, cursor: "pointer" }}>{t === "active" ? "Aktif" : "Ayrılan"}</button>
+            <button key={t} onClick={() => setTab(t)} style={{ padding: "7px 14px", fontSize: 12, fontWeight: tab === t ? 600 : 400, color: tab === t ? C.ink : C.textFaint, background: tab === t ? "#fff" : "transparent", border: "none", borderRadius: 7, cursor: "pointer" }}>{t === "active" ? "Aktif" : "Ayrılan"}</button>
           ))}
         </div>
       </div>
 
-      {/* tablo */}
+      {/* === TABLO === */}
       {loading ? (
         <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>Yükleniyor…</div>
       ) : filtered.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>{tab === "active" ? "Henüz çalışan yok. “Personel Ekle” ile başla." : "Ayrılan çalışan yok."}</div>
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>{tab === "active" ? "Bu filtrede çalışan yok." : "Ayrılan çalışan yok."}</div>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.2fr 1fr 0.9fr 70px", gap: 12, padding: "0 14px 8px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-            <span>çalışan</span><span>pozisyon</span><span>maaş (brüt)</span><span>durum</span><span style={{ textAlign: "center" }}>işlem</span>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 11, padding: "0 14px 9px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            <span>çalışan</span><span>pozisyon</span><span>departman</span><span>maaş</span><span>çalışma</span><span style={{ textAlign: "center" }}>işlem</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
             {filtered.map((e) => {
               const ini = ((e.first_name?.[0] || "") + (e.last_name?.[0] || "")).toUpperCase();
+              const onDuty = onDutyIds.has(e.id);
+              const inactive = e.is_active === false;
               return (
-                <div key={e.id} style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", display: "grid", gridTemplateColumns: "1.6fr 1.2fr 1fr 0.9fr 70px", gap: 12, alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: C.greenSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, color: C.greenDark }}>{ini || "–"}</div>
-                    <div style={{ minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 500, color: C.ink }}>{e.first_name} {e.last_name}</div><div style={{ fontSize: 9.5, color: C.textHint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.email || "—"}</div></div>
+                <div key={e.id} style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderLeft: onDuty ? "2.5px solid #22C55E" : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 14px", display: "grid", gridTemplateColumns: cols, gap: 11, alignItems: "center", opacity: inactive ? 0.6 : 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                    <div style={{ position: "relative", flexShrink: 0 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: inactive ? C.neutralBg : C.greenSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: inactive ? C.textHint : C.greenDark }}>{ini || "–"}</div>
+                      {onDuty && <span style={{ position: "absolute", right: -1, bottom: -1, width: 11, height: 11, borderRadius: "50%", background: "#22C55E", border: "2px solid #fff" }} />}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: C.ink, textDecoration: inactive ? "line-through" : "none" }}>{e.first_name} {e.last_name}</div>
+                      <div style={{ fontSize: 10.5, color: C.textHint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.email || "—"}</div>
+                    </div>
                   </div>
-                  <span style={{ fontSize: 12, color: "#3C3A36" }}>{e.position || "—"}</span>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: C.ink }}>{fmtMoney(e.base_salary)}</span>
-                  <span>{e.is_active !== false
-                    ? <span style={{ fontSize: 9, color: C.greenDark, background: C.greenSoft, padding: "2px 9px", borderRadius: 6, fontWeight: 600 }}>aktif</span>
-                    : <span style={{ fontSize: 9, color: C.textFaint, background: C.neutralBg, padding: "2px 9px", borderRadius: 6, fontWeight: 600 }}>ayrıldı</span>}</span>
-                  <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-                    <button onClick={() => openDetail(e)} title="Düzenle" style={{ width: 27, height: 27, borderRadius: 7, border: `0.5px solid ${C.border}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-pencil" style={{ fontSize: 13, color: C.textMuted }} aria-hidden="true" /></button>
+                  <span style={{ fontSize: 12.5, color: inactive ? C.textFaint : "#3C3A36" }}>{e.position || "—"}</span>
+                  <span>{e.department ? <span style={{ fontSize: 11, color: "#3C3A36", background: C.neutralBg, padding: "3px 9px", borderRadius: 6 }}>{e.department}</span> : <span style={{ fontSize: 11, color: C.textHint }}>—</span>}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: inactive ? C.textFaint : C.ink }}>{fmtMoney(e.base_salary)}</span>
+                  <span>{e.contract_type === "part_time"
+                    ? <span style={{ fontSize: 11, color: "#854F0B", background: "#FAEEDA", padding: "3px 10px", borderRadius: 6 }}>Yarı Zamanlı</span>
+                    : <span style={{ fontSize: 11, color: C.greenDark, background: C.greenSoft, padding: "3px 10px", borderRadius: 6 }}>Tam Zamanlı</span>}</span>
+                  <div style={{ display: "flex", justifyContent: "center" }}>
+                    {inactive
+                      ? <button onClick={() => reactivate(e)} title="Geri al" style={{ width: 29, height: 29, borderRadius: 7, border: `0.5px solid ${C.border}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-rotate" style={{ fontSize: 14, color: C.textMuted }} aria-hidden="true" /></button>
+                      : <button onClick={() => openDetail(e)} title="Düzenle" style={{ width: 29, height: 29, borderRadius: 7, border: `0.5px solid ${C.border}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-pencil" style={{ fontSize: 14, color: C.textMuted }} aria-hidden="true" /></button>}
                   </div>
                 </div>
               );
@@ -485,9 +558,9 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
       )}
 
       {/* bilgi serit */}
-      <div style={{ marginTop: 16, padding: "11px 14px", background: C.neutralBg, borderRadius: 9, display: "flex", alignItems: "center", gap: 8 }}>
-        <i className="ti ti-shield-check" style={{ fontSize: 15, color: C.greenDark }} aria-hidden="true" />
-        <span style={{ fontSize: 10.5, color: C.textMuted, lineHeight: 1.5 }}>Sadece kendi şubenizin personelini görür ve yönetirsiniz. Çıkarma işlemi şifre onayı ister.</span>
+      <div style={{ marginTop: 18, padding: "11px 14px", background: C.neutralBg, borderRadius: 9, display: "flex", alignItems: "center", gap: 9 }}>
+        <i className="ti ti-circle-filled" style={{ fontSize: 9, color: "#22C55E" }} aria-hidden="true" />
+        <span style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>Yeşil nokta <span style={{ color: C.greenDark, fontWeight: 600 }}>şu an mesaide</span> demek. <span style={{ color: C.greenDark, fontWeight: 600 }}>Giriş hesaplı</span> çalışanlar mobil panele girebilir. Çıkarma şifre onayı ister.</span>
       </div>
 
       {/* === EKLE MODAL === */}
@@ -497,14 +570,41 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
             <div style={{ flex: 1 }}><label style={labelStyle}>Ad *</label><input style={inputStyle} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /></div>
             <div style={{ flex: 1 }}><label style={labelStyle}>Soyad *</label><input style={inputStyle} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /></div>
           </div>
-          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-            <div style={{ flex: 1 }}><label style={labelStyle}>E-posta</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
-            <div style={{ flex: 1 }}><label style={labelStyle}>Telefon</label><input style={inputStyle} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
-          </div>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Telefon</label><input style={inputStyle} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
             <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} /></div>
-            <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} /></div>
+            <div style={{ flex: 1, position: "relative" }}>
+              <label style={labelStyle}>Departman</label>
+              <div onClick={() => setDeptOpen(!deptOpen)} style={{ ...inputStyle, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderColor: deptOpen ? C.green : C.border }}>
+                <span style={{ color: form.department ? C.ink : C.textHint }}>{form.department || "Seç…"}</span>
+                <i className="ti ti-chevron-down" style={{ fontSize: 15, color: C.textMuted }} aria-hidden="true" />
+              </div>
+              {deptOpen && (
+                <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", padding: 5, zIndex: 20, maxHeight: 200, overflowY: "auto" }}>
+                  {allDepts.length === 0 && !showNewDept && <div style={{ padding: "8px 10px", fontSize: 11.5, color: C.textHint }}>Henüz departman yok.</div>}
+                  {allDepts.map((d) => (
+                    <div key={d} onClick={() => { setForm({ ...form, department: d }); setDeptOpen(false); }} style={{ padding: "8px 10px", fontSize: 12.5, color: C.ink, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", background: form.department === d ? C.greenSoft : "transparent" }}>
+                      <span>{d}</span>{form.department === d && <i className="ti ti-check" style={{ fontSize: 14, color: C.greenDark }} aria-hidden="true" />}
+                    </div>
+                  ))}
+                  <div style={{ height: "0.5px", background: C.border, margin: "5px 0" }} />
+                  <div onClick={() => { setShowNewDept(true); setDeptOpen(false); }} style={{ padding: "8px 10px", fontSize: 12.5, color: C.greenDark, fontWeight: 600, borderRadius: 6, display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
+                    <i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />Yeni departman ekle
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
+          {showNewDept && (
+            <div style={{ background: C.neutralBg, borderRadius: 9, padding: "11px 12px", marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 7, fontWeight: 500 }}>Yeni departman adı</div>
+              <div style={{ display: "flex", gap: 7 }}>
+                <input value={newDept} onChange={(e) => setNewDept(e.target.value)} placeholder="Örn. Temizlik" style={{ ...inputStyle, flex: 1 }} />
+                <button onClick={() => { const d = newDept.trim(); if (d) { setExtraDepts([...extraDepts, d]); setForm({ ...form, department: d }); setNewDept(""); setShowNewDept(false); } }} style={{ background: "#22C55E", color: "#0A0A0A", border: "none", borderRadius: 8, padding: "0 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>Ekle</button>
+                <button onClick={() => { setShowNewDept(false); setNewDept(""); }} style={{ background: "#fff", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "0 12px", fontSize: 12.5, cursor: "pointer" }}>İptal</button>
+              </div>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
             <div style={{ flex: 1 }}><label style={labelStyle}>Brüt Maaş</label><input style={inputStyle} value={form.base_salary} onChange={(e) => setForm({ ...form, base_salary: e.target.value })} placeholder="45000" /></div>
             <div style={{ flex: 1 }}><label style={labelStyle}>Çalışma Tipi</label>
@@ -516,23 +616,17 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
           </div>
           <div style={{ marginBottom: 14 }}><label style={labelStyle}>IBAN</label><input style={inputStyle} value={form.bank_iban} onChange={(e) => setForm({ ...form, bank_iban: e.target.value })} placeholder="TR.." /></div>
           <div style={{ marginBottom: 14, padding: 13, background: C.neutralBg, borderRadius: 10 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}>
-              <input type="checkbox" checked={form.create_user_account} onChange={(e) => setForm({ ...form, create_user_account: e.target.checked })} style={{ width: 16, height: 16, accentColor: C.green, cursor: "pointer" }} />
-              <div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: C.ink }}>Giriş hesabı oluştur</div>
-                <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 1 }}>Çalışan mobil panele giriş yapabilsin (check-in, izin, vardiya).</div>
-              </div>
-            </label>
-            {form.create_user_account && (
-              <div style={{ marginTop: 12 }}>
-                <label style={labelStyle}>Geçici Şifre * (en az 8 karakter)</label>
-                <input style={inputStyle} type="text" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Çalışan sonra değiştirir" />
-                <div style={{ fontSize: 10.5, color: C.textHint, marginTop: 5 }}>Giriş e-postası: {form.email || "(yukarıdaki e-posta)"}</div>
-              </div>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+              <i className="ti ti-device-mobile" style={{ fontSize: 15, color: C.greenDark }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.ink }}>Panel giriş bilgileri</span>
+            </div>
+            <div style={{ fontSize: 10.5, color: C.textMuted, marginBottom: 12, lineHeight: 1.5 }}>Her çalışan kendi paneline girip vardiya, izin ve check-in işlemlerini yapar. Bu yüzden e-posta ve şifre zorunludur.</div>
+            <div style={{ marginBottom: 11 }}><label style={labelStyle}>E-posta (giriş) *</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="calisan@ornek.com" /></div>
+            <label style={labelStyle}>Geçici Şifre * (en az 8 karakter)</label>
+            <input style={inputStyle} type="text" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Çalışan sonra değiştirir" />
           </div>
           {formErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{formErr}</div>}
-          <button style={{ ...greenBtn, width: "100%", justifyContent: "center", padding: "11px" }} onClick={addEmployee}>Personel Ekle</button>
+          <button style={{ width: "100%", justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "11px", fontSize: 13, fontWeight: 600, cursor: "pointer" }} onClick={addEmployee}>Personel Ekle</button>
         </Modal>
       )}
 
@@ -548,11 +642,12 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
                 <DetailRow label="E-posta" value={detail.email || "—"} />
                 <DetailRow label="Telefon" value={detail.phone || "—"} />
                 <DetailRow label="IBAN" value={detail.bank_iban || "—"} />
+                <DetailRow label="Giriş hesabı" value={hasLogin(detail) ? "Var (mobil panele girebilir)" : "Yok"} />
               </div>
               {msg && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{msg}</div>}
               {!showTerm ? (
                 <div style={{ display: "flex", gap: 9 }}>
-                  <button style={{ ...greenBtn, flex: 1, justifyContent: "center" }} onClick={() => setEditing(true)}><i className="ti ti-pencil" style={{ fontSize: 14 }} aria-hidden="true" />Düzenle</button>
+                  <button style={{ flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={() => setEditing(true)}><i className="ti ti-pencil" style={{ fontSize: 14 }} aria-hidden="true" />Düzenle</button>
                   <button style={{ flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", color: C.dangerInk, border: `1px solid ${C.dangerBorder}`, borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={() => setShowTerm(true)}><i className="ti ti-user-off" style={{ fontSize: 14 }} aria-hidden="true" />İşten Çıkar</button>
                 </div>
               ) : (
@@ -584,14 +679,40 @@ function ManagerStaff({ token, branchId, companyId, branchName }: { token: strin
               <div style={{ marginBottom: 14 }}><label style={labelStyle}>IBAN</label><input style={inputStyle} value={edit.bank_iban} onChange={(e) => setEdit({ ...edit, bank_iban: e.target.value })} /></div>
               {msg && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{msg}</div>}
               <div style={{ display: "flex", gap: 9 }}>
-                <button style={{ ...greenBtn, flex: 1, justifyContent: "center" }} onClick={saveEdit}>Kaydet</button>
+                <button style={{ flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={saveEdit}>Kaydet</button>
                 <button style={{ flex: 1, justifyContent: "center", background: "#fff", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 9, padding: "9px 16px", fontSize: 12.5, cursor: "pointer" }} onClick={() => { setEditing(false); setMsg(""); }}>Vazgeç</button>
               </div>
             </>
           )}
         </Modal>
       )}
+
     </>
+  );
+}
+
+function StatCard({ label, value, green, dark }: { label: string; value: string; green?: boolean; dark?: boolean }) {
+  if (dark) {
+    return (
+      <div style={{ background: "#0A0A0A", borderRadius: 11, padding: "14px 16px" }}>
+        <div style={{ fontSize: 11.5, color: "#2EE06A" }}>{label}</div>
+        <div style={{ fontSize: 23, fontWeight: 700, color: "#fff", marginTop: 3 }}>{value}</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 11, padding: "14px 16px" }}>
+      <div style={{ fontSize: 11.5, color: C.textFaint }}>{label}</div>
+      <div style={{ fontSize: 23, fontWeight: 700, color: green ? "#1FA85A" : C.ink, marginTop: 3 }}>{value}</div>
+    </div>
+  );
+}
+
+function DeptChip({ label, count, active, onClick }: { label: string; count: number; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{ padding: "6px 13px", fontSize: 12, fontWeight: active ? 600 : 400, color: active ? "#fff" : "#3C3A36", background: active ? "#1FA85A" : "#fff", border: active ? "none" : `0.5px solid ${C.border}`, borderRadius: 20, cursor: "pointer" }}>
+      {label} <span style={{ color: active ? "rgba(255,255,255,0.75)" : C.textHint }}>{count}</span>
+    </button>
   );
 }
 

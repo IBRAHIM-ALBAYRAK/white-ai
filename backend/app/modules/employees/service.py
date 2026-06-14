@@ -130,6 +130,63 @@ class EmployeeService:
         await db.flush()
         return employee
 
+    # -- Create login account for EXISTING employee ---------------------------
+    async def create_account_for_employee(
+        self, db: AsyncSession, employee_id: str, email: str, password: str, role: str = "employee"
+    ) -> Employee:
+        emp = (await db.execute(
+            select(Employee).where(Employee.id == employee_id)
+        )).scalar_one_or_none()
+        if emp is None:
+            raise NotFoundException("Employee not found.")
+        if emp.user_id:
+            raise BadRequestException("Bu calisanin zaten bir giris hesabi var.")
+        if not email:
+            raise BadRequestException("Giris hesabi icin e-posta zorunlu.")
+        if not password or len(password) < 8:
+            raise BadRequestException("Sifre en az 8 karakter olmali.")
+        try:
+            role_enum = UserRole(role)
+        except ValueError:
+            raise BadRequestException(f"Invalid role: {role}.")
+        existing_user = (await db.execute(
+            select(User).where(User.email == email)
+        )).scalar_one_or_none()
+        if existing_user:
+            linked = (await db.execute(
+                select(Employee).where(Employee.user_id == existing_user.id)
+            )).scalar_one_or_none()
+            if linked:
+                raise BadRequestException("Bu e-posta baska bir calisana bagli.")
+            if existing_user.is_active:
+                raise BadRequestException("Bu e-posta ile aktif bir hesap zaten var.")
+            existing_user.is_active = True
+            existing_user.first_name = emp.first_name
+            existing_user.last_name = emp.last_name
+            existing_user.role = role_enum
+            existing_user.hashed_password = hash_password(password)
+            db.add(existing_user)
+            emp.user_id = existing_user.id
+        else:
+            new_user = User(
+                id=str(uuid.uuid4()),
+                first_name=emp.first_name,
+                last_name=emp.last_name,
+                email=email,
+                hashed_password=hash_password(password),
+                phone=emp.phone,
+                role=role_enum,
+                is_active=True,
+            )
+            db.add(new_user)
+            await db.flush()
+            emp.user_id = new_user.id
+        if not emp.email:
+            emp.email = email
+        db.add(emp)
+        await db.flush()
+        return emp
+
     # -- Read -----------------------------------------------------------------
 
     async def get_employees_by_branch(self, db: AsyncSession, branch_id: str) -> list[Employee]:

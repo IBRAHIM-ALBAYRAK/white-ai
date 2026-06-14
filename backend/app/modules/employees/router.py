@@ -15,7 +15,7 @@ Termination is soft (is_active=False + termination_date) to preserve history.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_role, assert_branch_access, assert_employee_company_access, assert_employee_write_access
@@ -139,3 +139,23 @@ async def reactivate_employee(
     """Reactivate (rehire) a terminated employee."""
     await assert_employee_write_access(db, current_user, employee_id)
     return await employee_service.reactivate_employee(db, employee_id)
+
+
+# --- Mevcut calisana giris hesabi ac (sonradan) ---
+class CreateAccountSchema(BaseModel):
+    email: EmailStr
+    password: str
+    role: str = "employee"
+
+
+@router.post("/employees/{employee_id}/create-account", response_model=EmployeeResponseSchema)
+async def create_account_for_employee(
+    employee_id: str,
+    data: CreateAccountSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(admin_write),
+):
+    await assert_employee_write_access(db, current_user, employee_id)
+    return await employee_service.create_account_for_employee(
+        db, employee_id, data.email, data.password, data.role
+    )
