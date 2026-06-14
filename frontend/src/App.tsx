@@ -3,6 +3,7 @@ import axios from "axios";
 import EmployeePortal from "./EmployeePortal";
 import { FranchisesPage } from "./FranchisesPage";
 import BrandPanel from "./BrandPanel";
+import ManagerPanel from "./ManagerPanel";
 
 const API_URL = "http://127.0.0.1:8000/api/v1";
 
@@ -2181,6 +2182,10 @@ function MainApp({ user, token, onLogout }: { user: User; token: string; onLogou
   // Marka sahibi → yeni Marka Paneli (Panel 2). MainApp'in geri kalani calismaz.
   if (isBrand) {
     return <BrandPanel user={user} token={token} onLogout={onLogout} companyName={companyName} />;
+  }
+  // Sube yoneticisi -> Manager Paneli (tek sube). MainApp'in geri kalani calismaz.
+  if (user.role === "manager") {
+    return <ManagerPanel user={user} token={token} onLogout={onLogout} branchName={companyName} />;
   }
 
   const pageTitle: Record<string,string> = {
