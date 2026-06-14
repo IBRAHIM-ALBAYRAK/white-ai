@@ -133,6 +133,10 @@ async def assert_branch_access(db: AsyncSession, current_user: User, branch_id: 
     accessible = await get_accessible_company_ids(db, current_user)
     if accessible is None:
         return  # superadmin
+    if current_user.role == UserRole.MANAGER:
+        if current_user.branch_id is None or current_user.branch_id != branch_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu subeye erisiminiz yok.")
+        return
 
     branch = (await db.execute(
         select(Branch).where(Branch.id == branch_id)
