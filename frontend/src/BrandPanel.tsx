@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
+import { PieChart, Pie, Cell, AreaChart, Area, ResponsiveContainer, XAxis, Tooltip } from "recharts";
 
 // ============================================================================
 // WHITE.AI — Marka Sahibi Paneli (Panel 2)
@@ -153,10 +154,281 @@ export default function BrandPanel({
           {page === "inventory" && <InventoryPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "payroll" && <PayrollPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "ledger" && <LedgerPage token={token} companyId={user.company_id || ""} />}
-          {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && page !== "payroll" && page !== "ledger" && <Placeholder title={PAGE_TITLE[page]} />}
+          {page === "finance" && <FinancePage token={token} companyId={user.company_id || ""} />}
+          {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && page !== "payroll" && page !== "ledger" && page !== "finance" && <Placeholder title={PAGE_TITLE[page]} />}
         </div>
       </main>
     </div>
+  );
+}
+
+// ============================================================================
+// Finans — marka geneli ozet dashboard. /finance/overview/{y}/{m}
+// Otomatik kalemler (sevkiyat, bordro) + elle girilen kategoriler birlesir.
+// ============================================================================
+type OverviewData = {
+  year: number; month: number;
+  shipment_income: number; franchise_shipment_income: number;
+  payroll_cost: number; warehouse_value: number; active_franchise_count: number;
+  manual_income: number; manual_expense: number;
+  income_categories: { category_id: string; name: string; kind: string; total: number }[];
+  expense_categories: { category_id: string; name: string; kind: string; total: number }[];
+  total_income: number; total_expense: number; net: number;
+};
+const AYLAR_F = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+const fmtTLf = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
+const fmtTLfull = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtCompact = (n: number) => {
+  const a = Math.abs(n);
+  if (a >= 1_000_000) return "₺" + (n / 1_000_000).toLocaleString("tr-TR", { maximumFractionDigits: 2 }) + "M";
+  if (a >= 1_000) return "₺" + Math.round(n / 1_000) + "B";
+  return "₺" + Math.round(n);
+};
+const GELIR_RENK = ["#1FA85A", "#3DC679", "#86E0AC", "#B9EDCF", "#D8F5E4"];
+const GIDER_RENK = ["#BC8512", "#E8C36E", "#F0D7A0", "#F6E7C5"];
+
+function FinancePage({ token, companyId }: { token: string; companyId: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const today = new Date();
+  const [tab, setTab] = useState<"overview" | "branches" | "franchise">("overview");
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [data, setData] = useState<OverviewData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/finance/overview/${year}/${month}?t=${Date.now()}`, { headers });
+      setData(r.data);
+    } catch { setData(null); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [year, month, companyId]);
+
+  const prevMonth = () => { if (month === 1) { setMonth(12); setYear(year - 1); } else setMonth(month - 1); };
+  const nextMonth = () => {
+    const atCur = year === today.getFullYear() && month === today.getMonth() + 1;
+    if (atCur) return;
+    if (month === 12) { setMonth(1); setYear(year + 1); } else setMonth(month + 1);
+  };
+  const atCurrent = year === today.getFullYear() && month === today.getMonth() + 1;
+
+  // gelir donut: sevkiyat (otomatik) + manuel gelir kategorileri
+  const gelirData: { name: string; value: number }[] = [];
+  if (data) {
+    if (data.shipment_income > 0) gelirData.push({ name: "Sevkiyat", value: data.shipment_income });
+    data.income_categories.forEach((c) => gelirData.push({ name: c.name, value: c.total }));
+  }
+  // gider donut: bordro (otomatik) + manuel gider kategorileri
+  const giderData: { name: string; value: number }[] = [];
+  if (data) {
+    if (data.payroll_cost > 0) giderData.push({ name: "Bordro", value: data.payroll_cost });
+    data.expense_categories.forEach((c) => giderData.push({ name: c.name, value: c.total }));
+  }
+  const gelirTop = gelirData.reduce((a, x) => a + x.value, 0);
+  const giderTop = giderData.reduce((a, x) => a + x.value, 0);
+  const pct = (v: number, top: number) => top > 0 ? Math.round((v / top) * 100) : 0;
+
+  // trend: simdilik sadece bu ay (veri biriktikce dolacak)
+  const trendData = [
+    { ay: AYLAR_F[month - 1].slice(0, 3), gelir: data?.total_income || 0, gider: data?.total_expense || 0 },
+  ];
+
+  const net = data?.net || 0;
+  const netPozitif = net >= 0;
+  const karMarji = data && data.total_income > 0 ? ((net / data.total_income) * 100) : 0;
+
+  // son hareketler (otomatik kalemlerden turetilmis ozet)
+  const hareketler: { ad: string; alt: string; tutar: number; gelir: boolean; icon: string; bg: string; ink: string }[] = [];
+  if (data) {
+    if (data.shipment_income > 0) hareketler.push({ ad: "Sevkiyat geliri", alt: "otomatik · şubelere & franchise", tutar: data.shipment_income, gelir: true, icon: "ti-truck-delivery", bg: C.greenSoft, ink: C.greenDark });
+    if (data.payroll_cost > 0) hareketler.push({ ad: "Bordro maliyeti", alt: "otomatik · işveren toplam yükü", tutar: data.payroll_cost, gelir: false, icon: "ti-receipt-2", bg: C.warnBg, ink: C.warnInk });
+    data.income_categories.forEach((c) => hareketler.push({ ad: c.name, alt: "elle girilen · gelir", tutar: c.total, gelir: true, icon: "ti-arrow-up-right", bg: C.greenSoft, ink: C.greenDark }));
+    data.expense_categories.forEach((c) => hareketler.push({ ad: c.name, alt: "elle girilen · gider", tutar: c.total, gelir: false, icon: "ti-arrow-down-right", bg: C.warnBg, ink: C.warnInk }));
+  }
+
+  const cardShadow = "0 1px 3px rgba(0,0,0,0.025)";
+
+  return (
+    <>
+      {/* baslik + sekme + donem */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <div>
+          <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.025em", color: C.ink }}>Finans</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>Markanın tüm para akışı, tek bakışta.</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "inline-flex", gap: 2, background: C.neutralBg, borderRadius: 10, padding: 3 }}>
+            {([["overview", "Genel Bakış"], ["branches", "Şubeler"], ["franchise", "Franchise"]] as const).map(([k, lbl]) => (
+              <div key={k} onClick={() => setTab(k)} style={{ padding: "7px 15px", fontSize: 12, fontWeight: tab === k ? 600 : 500, color: tab === k ? C.ink : C.textFaint, background: tab === k ? "#fff" : "transparent", borderRadius: 8, cursor: "pointer", boxShadow: tab === k ? "0 1px 3px rgba(0,0,0,0.07)" : "none" }}>{lbl}</div>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", background: "#fff", border: `0.5px solid #E4E2DB`, borderRadius: 9 }}>
+            <button onClick={prevMonth} aria-label="Önceki ay" style={{ border: "none", background: "transparent", padding: "7px 10px", cursor: "pointer", color: C.textHint, display: "flex" }}><i className="ti ti-chevron-left" style={{ fontSize: 13 }} aria-hidden="true" /></button>
+            <span style={{ fontSize: 12, fontWeight: 600, padding: "0 6px", color: C.ink, minWidth: 96, textAlign: "center" }}>{AYLAR_F[month - 1]} {year}</span>
+            <button onClick={nextMonth} aria-label="Sonraki ay" style={{ border: "none", background: "transparent", padding: "7px 10px", cursor: atCurrent ? "not-allowed" : "pointer", color: atCurrent ? "#E0DDD6" : C.textHint, display: "flex" }}><i className="ti ti-chevron-right" style={{ fontSize: 13 }} aria-hidden="true" /></button>
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: "60px 0", textAlign: "center", color: C.textHint, fontSize: 13 }}>Yükleniyor…</div>
+      ) : !data ? (
+        <div style={{ padding: "60px 0", textAlign: "center", color: C.textHint, fontSize: 13 }}>Veri alınamadı.</div>
+      ) : tab !== "overview" ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "70px 20px", color: C.textHint }}>
+          <i className={`ti ${tab === "branches" ? "ti-building-store" : "ti-affiliate"}`} style={{ fontSize: 30 }} aria-hidden="true" />
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.textMuted }}>{tab === "branches" ? "Şube Ciroları" : "Franchise & Royalty"}</div>
+          <div style={{ fontSize: 12.5, maxWidth: 320, textAlign: "center", lineHeight: 1.5 }}>{tab === "branches" ? "Şube bazlı ciro POS entegrasyonu ile gelecek." : "Franchise sevkiyat geliri ve royalty dökümü burada olacak."}</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 210px", gap: 14 }}>
+
+          {/* SOL */}
+          <div>
+            {/* 3 metrik */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
+              <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 15, padding: "17px 18px", boxShadow: cardShadow }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}><span style={{ fontSize: 11, color: C.textFaint, fontWeight: 500 }}>Toplam Gelir</span><div style={{ width: 28, height: 28, borderRadius: 9, background: C.greenSoft, display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-arrow-up-right" style={{ fontSize: 15, color: C.greenDark }} aria-hidden="true" /></div></div>
+                <div style={{ fontSize: 23, fontWeight: 700, color: C.ink, letterSpacing: "-0.025em" }}>{fmtTLf(data.total_income)}</div>
+                <div style={{ fontSize: 9.5, color: C.textHint, marginTop: 6 }}>sevkiyat + elle girilen</div>
+              </div>
+              <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 15, padding: "17px 18px", boxShadow: cardShadow }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}><span style={{ fontSize: 11, color: C.textFaint, fontWeight: 500 }}>Toplam Gider</span><div style={{ width: 28, height: 28, borderRadius: 9, background: C.warnBg, display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-arrow-down-right" style={{ fontSize: 15, color: C.warnInk }} aria-hidden="true" /></div></div>
+                <div style={{ fontSize: 23, fontWeight: 700, color: C.ink, letterSpacing: "-0.025em" }}>{fmtTLf(data.total_expense)}</div>
+                <div style={{ fontSize: 9.5, color: C.textHint, marginTop: 6 }}>bordro + elle girilen</div>
+              </div>
+              <div style={{ background: "linear-gradient(155deg,#111210,#0a0a0a)", borderRadius: 15, padding: "17px 18px", position: "relative", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: -20, right: -20, width: 90, height: 90, background: netPozitif ? "radial-gradient(circle, rgba(46,224,106,0.16), transparent 70%)" : "radial-gradient(circle, rgba(220,38,38,0.18), transparent 70%)" }} />
+                <div style={{ position: "relative" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}><span style={{ fontSize: 11, color: "#85837C", fontWeight: 500 }}>Net {netPozitif ? "Kâr" : "Zarar"}</span><div style={{ width: 28, height: 28, borderRadius: 9, background: netPozitif ? "rgba(46,224,106,0.16)" : "rgba(220,38,38,0.18)", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-wallet" style={{ fontSize: 15, color: netPozitif ? "#2EE06A" : "#F87171" }} aria-hidden="true" /></div></div>
+                  <div style={{ fontSize: 23, fontWeight: 700, color: netPozitif ? "#2EE06A" : "#F87171", letterSpacing: "-0.025em" }}>{netPozitif ? "+" : ""}{fmtTLf(net)}</div>
+                  <div style={{ fontSize: 9.5, color: "#6C6A64", marginTop: 6 }}>{data.total_income > 0 ? `kâr marjı %${karMarji.toFixed(1)}` : "henüz gelir yok"} · {netPozitif ? "pozitif" : "negatif"}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* nakit akisi (area) */}
+            <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 15, padding: "18px 20px", marginBottom: 14, boxShadow: cardShadow }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div><div style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>Nakit Akışı</div><div style={{ fontSize: 10.5, color: C.textFaint, marginTop: 1 }}>gelir & gider trendi</div></div>
+                <div style={{ display: "flex", gap: 14 }}><span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: C.textMuted }}><span style={{ width: 10, height: 3, borderRadius: 2, background: C.green }} />Gelir</span><span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: C.textMuted }}><span style={{ width: 10, height: 3, borderRadius: 2, background: C.warnInk }} />Gider</span></div>
+              </div>
+              <div style={{ height: 150 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="fGelir" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.green} stopOpacity={0.2} /><stop offset="100%" stopColor={C.green} stopOpacity={0} /></linearGradient>
+                    </defs>
+                    <XAxis dataKey="ay" tick={{ fontSize: 10, fill: C.textHint }} axisLine={false} tickLine={false} />
+                    <Tooltip formatter={(v: any) => fmtTLfull(Number(v))} contentStyle={{ fontSize: 11, borderRadius: 8, border: `0.5px solid ${C.border}` }} />
+                    <Area type="monotone" dataKey="gelir" stroke={C.green} strokeWidth={2.4} fill="url(#fGelir)" />
+                    <Area type="monotone" dataKey="gider" stroke={C.warnInk} strokeWidth={2.2} strokeDasharray="5 4" fill="none" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ fontSize: 10, color: C.textHint, textAlign: "center", marginTop: 4 }}>Geçmiş aylar veri biriktikçe dolacak</div>
+            </div>
+
+            {/* son hareketler */}
+            <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 15, padding: "18px 20px", boxShadow: cardShadow }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: C.ink, marginBottom: 14 }}>Son Hareketler</div>
+              {hareketler.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.textHint, padding: "16px 0", textAlign: "center" }}>Bu dönemde hareket yok.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {hareketler.map((h, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: i < hareketler.length - 1 ? `0.5px solid ${C.borderSoft}` : "none" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 11 }}><div style={{ width: 34, height: 34, borderRadius: 10, background: h.bg, display: "flex", alignItems: "center", justifyContent: "center" }}><i className={`ti ${h.icon}`} style={{ fontSize: 16, color: h.ink }} aria-hidden="true" /></div><div><div style={{ fontSize: 12.5, fontWeight: 500, color: C.ink }}>{h.ad}</div><div style={{ fontSize: 9.5, color: C.textHint, marginTop: 1 }}>{h.alt}</div></div></div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: h.gelir ? C.greenDark : C.warnInk }}>{h.gelir ? "+" : "−"}{fmtTLf(h.tutar)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* SAG */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* finansal saglik */}
+            <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 15, padding: 17, boxShadow: cardShadow }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}><i className="ti ti-heart-rate-monitor" style={{ fontSize: 14, color: netPozitif ? C.greenDark : C.dangerInk }} aria-hidden="true" /><span style={{ fontSize: 11, color: C.textFaint, fontWeight: 500 }}>Finansal Sağlık</span></div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: netPozitif ? C.greenDark : C.dangerInk, letterSpacing: "-0.02em" }}>{netPozitif ? "İyi" : "Dikkat"}</div>
+              <div style={{ height: 7, background: C.neutralBg, borderRadius: 4, overflow: "hidden", margin: "13px 0 9px" }}><div style={{ width: netPozitif ? "72%" : "34%", height: "100%", background: netPozitif ? "linear-gradient(90deg,#1FA85A,#3DC679)" : "linear-gradient(90deg,#DC2626,#F87171)", borderRadius: 4 }} /></div>
+              <div style={{ fontSize: 9.5, color: C.textHint, lineHeight: 1.45 }}>{netPozitif ? "Net pozitif, gider kontrol altında." : "Gider geliri aşıyor — kontrol gerek."}</div>
+            </div>
+
+            {/* GELIR donut */}
+            <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 15, padding: 17, boxShadow: cardShadow }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: C.ink, marginBottom: 8 }}>Gelir Dağılımı</div>
+              {gelirData.length === 0 ? (
+                <div style={{ fontSize: 11, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Henüz gelir yok.</div>
+              ) : (
+                <>
+                  <div style={{ position: "relative", height: 120, marginBottom: 12 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={gelirData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={38} outerRadius={54} paddingAngle={2} stroke="none">
+                          {gelirData.map((_, i) => <Cell key={i} fill={GELIR_RENK[i % GELIR_RENK.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v: any) => fmtTLfull(Number(v))} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", pointerEvents: "none" }}>
+                      <div style={{ fontSize: 8.5, color: C.textHint }}>Toplam</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.greenDark }}>{fmtCompact(gelirTop)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                    {gelirData.map((g, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "#3C3A36" }}><span style={{ width: 8, height: 8, borderRadius: 3, background: GELIR_RENK[i % GELIR_RENK.length] }} />{g.name}</span><span style={{ fontSize: 11, fontWeight: 600, color: C.ink }}>%{pct(g.value, gelirTop)}</span></div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* GIDER donut */}
+            <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 15, padding: 17, boxShadow: cardShadow }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: C.ink, marginBottom: 8 }}>Gider Dağılımı</div>
+              {giderData.length === 0 ? (
+                <div style={{ fontSize: 11, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Henüz gider yok.</div>
+              ) : (
+                <>
+                  <div style={{ position: "relative", height: 120, marginBottom: 12 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={giderData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={38} outerRadius={54} paddingAngle={2} stroke="none">
+                          {giderData.map((_, i) => <Cell key={i} fill={GIDER_RENK[i % GIDER_RENK.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v: any) => fmtTLfull(Number(v))} contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", pointerEvents: "none" }}>
+                      <div style={{ fontSize: 8.5, color: C.textHint }}>Toplam</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.warnInk }}>{fmtCompact(giderTop)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                    {giderData.map((g, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "#3C3A36" }}><span style={{ width: 8, height: 8, borderRadius: 3, background: GIDER_RENK[i % GIDER_RENK.length] }} />{g.name}</span><span style={{ fontSize: 11, fontWeight: 600, color: C.ink }}>%{pct(g.value, giderTop)}</span></div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* depo varlik */}
+            <div style={{ background: "linear-gradient(155deg,#111210,#0a0a0a)", borderRadius: 15, padding: 17 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}><i className="ti ti-building-warehouse" style={{ fontSize: 15, color: "#2EE06A" }} aria-hidden="true" /><span style={{ fontSize: 11, color: "#85837C", fontWeight: 500 }}>Depo Varlığı</span></div>
+              <div style={{ fontSize: 21, fontWeight: 700, color: "#fff", letterSpacing: "-0.02em" }}>{fmtCompact(data.warehouse_value)}</div>
+              <div style={{ fontSize: 9.5, color: "#6C6A64", marginTop: 4 }}>stok değeri · gidere dahil değil</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
