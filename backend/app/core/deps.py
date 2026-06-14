@@ -302,6 +302,10 @@ async def assert_employee_write_access(db: AsyncSession, current_user: User, emp
     if emp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found.")
 
+    if current_user.role == UserRole.MANAGER:
+        if current_user.branch_id is None or emp.branch_id != current_user.branch_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sadece kendi subenizdeki personeli yonetebilirsiniz.")
+        return
     # Kendi doğrudan company'si ise yazma serbest
     if emp.company_id == current_user.company_id:
         return

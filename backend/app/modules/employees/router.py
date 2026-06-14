@@ -27,7 +27,7 @@ from app.modules.employees.service import employee_service
 
 router = APIRouter(tags=["Employees"])
 
-admin_write = require_role(UserRole.SUPERADMIN, UserRole.OWNER)
+admin_write = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 admin_read = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 ADMIN_ROLES = (UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 
@@ -45,6 +45,8 @@ async def create_employee(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(admin_write),
 ):
+    if data.branch_id:
+        await assert_branch_access(db, current_user, data.branch_id)
     return await employee_service.create_employee(db, data)
 
 
