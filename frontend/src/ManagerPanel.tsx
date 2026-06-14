@@ -30,6 +30,11 @@ const C = {
   textFaint: "#8A867F",
   textHint: "#A6A29B",
   neutralBg: "#F2F1ED",
+  warnBg: "#FEF6E7",
+  warnInk: "#C68A12",
+  dangerInk: "#C0564B",
+  dangerBorder: "#F3D9D6",
+  dangerBg: "#FDF3F2",
 };
 
 const NAV_ITEMS: { id: string; label: string; icon: string }[] = [
@@ -144,6 +149,8 @@ export default function ManagerPanel({
         <div style={{ flex: 1, overflowY: "auto", padding: "22px 26px" }}>
           {page === "overview"
             ? <ManagerOverview token={token} branchId={branchId} firstName={user.first_name} />
+            : page === "staff"
+            ? <ManagerStaff token={token} branchId={branchId} companyId={user.company_id || ""} branchName={subeAdi} />
             : <Placeholder title={PAGE_TITLE[page]} branchId={branchId} />}
         </div>
       </main>
@@ -302,6 +309,311 @@ function NabizKart({ icon, iconBg, iconColor, label, value, sub, valueColor }: {
       </div>
       <div style={{ fontSize: 22, fontWeight: 700, color: valueColor || C.ink }}>{value}</div>
       <div style={{ fontSize: 10, color: C.textHint, marginTop: 3 }}>{sub}</div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Manager Personel — kendi subesinin calisanlari. Tam yetki (ekle/duzenle/cikar).
+// branch_id otomatik manager'in subesi. Backend izolasyonu guvenli.
+// ============================================================================
+type Emp = {
+  id: string; first_name: string; last_name: string; email?: string | null;
+  phone?: string | null; position?: string | null; department?: string | null;
+  base_salary?: number | null; bank_iban?: string | null; contract_type?: string | null;
+  is_active: boolean;
+};
+
+function ManagerStaff({ token, branchId, companyId, branchName }: { token: string; branchId: string; companyId: string; branchName: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const [employees, setEmployees] = useState<Emp[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"active" | "inactive">("active");
+  const [search, setSearch] = useState("");
+  const [msg, setMsg] = useState("");
+
+  // ekle modal
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "", create_user_account: false, password: "" });
+  const [formErr, setFormErr] = useState("");
+
+  // detay/duzenle modal
+  const [detail, setDetail] = useState<Emp | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [edit, setEdit] = useState({ first_name: "", last_name: "", phone: "", position: "", department: "", base_salary: "", bank_iban: "" });
+  const [termPw, setTermPw] = useState("");
+  const [showTerm, setShowTerm] = useState(false);
+
+  const loadEmployees = async () => {
+    if (!branchId) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/employees/branch/${branchId}?t=${Date.now()}`, { headers });
+      setEmployees(Array.isArray(r.data) ? r.data : []);
+    } catch { setEmployees([]); }
+    setLoading(false);
+  };
+  useEffect(() => { loadEmployees(); /* eslint-disable-next-line */ }, [branchId, token]);
+
+  const addEmployee = async () => {
+    setFormErr("");
+    if (!form.first_name || !form.last_name) { setFormErr("Ad ve soyad zorunlu."); return; }
+    if (form.create_user_account) {
+      if (!form.email) { setFormErr("Giriş hesabı için e-posta zorunlu."); return; }
+      if (!form.password || form.password.length < 8) { setFormErr("Şifre en az 8 karakter olmalı."); return; }
+    }
+    try {
+      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId, branch_id: branchId };
+      if (form.email) payload.email = form.email;
+      if (form.create_user_account) { payload.create_user_account = true; payload.password = form.password; payload.role = "employee"; }
+      if (form.phone) payload.phone = form.phone;
+      if (form.position) payload.position = form.position;
+      if (form.department) payload.department = form.department;
+      if (form.base_salary) payload.base_salary = parseFloat(form.base_salary) || 0;
+      if (form.bank_iban) payload.bank_iban = form.bank_iban.trim();
+      await axios.post(`${API_URL}/employees`, payload, { headers });
+      setShowAdd(false);
+      setForm({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "", create_user_account: false, password: "" });
+      await loadEmployees();
+    } catch (e: any) { setFormErr(e.response?.data?.detail || "Eklenemedi."); }
+  };
+
+  const openDetail = (emp: Emp) => {
+    setDetail(emp); setEditing(false); setMsg(""); setShowTerm(false); setTermPw("");
+    setEdit({ first_name: emp.first_name || "", last_name: emp.last_name || "", phone: emp.phone || "", position: emp.position || "", department: emp.department || "", base_salary: emp.base_salary != null ? String(emp.base_salary) : "", bank_iban: emp.bank_iban || "" });
+  };
+
+  const saveEdit = async () => {
+    setMsg("");
+    if (!edit.first_name || !edit.last_name) { setMsg("Ad ve soyad zorunlu."); return; }
+    try {
+      const epayload: any = { first_name: edit.first_name, last_name: edit.last_name };
+      if (edit.phone) epayload.phone = edit.phone;
+      if (edit.position) epayload.position = edit.position;
+      if (edit.department) epayload.department = edit.department;
+      if (edit.base_salary) epayload.base_salary = parseFloat(edit.base_salary) || 0;
+      if (edit.bank_iban) epayload.bank_iban = edit.bank_iban.trim();
+      await axios.put(`${API_URL}/employees/${detail!.id}`, epayload, { headers });
+      setEditing(false);
+      await loadEmployees();
+      setDetail({ ...detail!, ...epayload });
+    } catch (e: any) { setMsg(e.response?.data?.detail || "Güncellenemedi."); }
+  };
+
+  const terminate = async () => {
+    setMsg("");
+    if (!termPw) { setMsg("Onaylamak için şifren zorunlu."); return; }
+    try {
+      await axios.delete(`${API_URL}/employees/${detail!.id}/terminate`, { headers, data: { admin_password: termPw } });
+      setDetail(null); setTermPw(""); setShowTerm(false);
+      await loadEmployees();
+    } catch (e: any) {
+      const d = e.response?.data?.detail;
+      setMsg(typeof d === "string" ? d : "İşten çıkarılamadı.");
+    }
+  };
+
+  const fmtMoney = (n?: number | null) => n != null ? "₺" + Number(n).toLocaleString("tr-TR") : "—";
+  const filtered = employees.filter((e) => {
+    const okTab = tab === "active" ? e.is_active !== false : e.is_active === false;
+    const q = search.trim().toLowerCase();
+    const okSearch = !q || `${e.first_name} ${e.last_name} ${e.position || ""}`.toLowerCase().includes(q);
+    return okTab && okSearch;
+  });
+  const activeCount = employees.filter((e) => e.is_active !== false).length;
+
+  const labelStyle: any = { display: "block", fontSize: 11, color: C.textMuted, marginBottom: 5, fontWeight: 500 };
+  const inputStyle: any = { width: "100%", padding: "8px 11px", fontSize: 13, border: `1px solid ${C.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box", background: "#fff", color: C.ink };
+  const greenBtn: any = { display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" };
+
+  return (
+    <>
+      {/* baslik + ekle */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: C.ink }}>Personel</div>
+          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{branchName} ekibi · {activeCount} aktif çalışan</div>
+        </div>
+        <button style={greenBtn} onClick={() => { setShowAdd(true); setFormErr(""); }}><i className="ti ti-plus" style={{ fontSize: 15, color: C.green }} aria-hidden="true" />Personel Ekle</button>
+      </div>
+
+      {/* arama + filtre */}
+      <div style={{ display: "flex", gap: 9, marginBottom: 14 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, padding: "8px 12px" }}>
+          <i className="ti ti-search" style={{ fontSize: 14, color: C.textHint }} aria-hidden="true" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="İsim veya pozisyon ara…" style={{ border: "none", outline: "none", fontSize: 12.5, flex: 1, background: "transparent", color: C.ink }} />
+        </div>
+        <div style={{ display: "inline-flex", gap: 2, background: C.neutralBg, borderRadius: 9, padding: 3 }}>
+          {(["active", "inactive"] as const).map((t) => (
+            <button key={t} onClick={() => setTab(t)} style={{ padding: "7px 13px", fontSize: 12, fontWeight: tab === t ? 600 : 400, color: tab === t ? C.ink : C.textFaint, background: tab === t ? "#fff" : "transparent", border: "none", borderRadius: 7, cursor: "pointer" }}>{t === "active" ? "Aktif" : "Ayrılan"}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* tablo */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>Yükleniyor…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>{tab === "active" ? "Henüz çalışan yok. “Personel Ekle” ile başla." : "Ayrılan çalışan yok."}</div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.2fr 1fr 0.9fr 70px", gap: 12, padding: "0 14px 8px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            <span>çalışan</span><span>pozisyon</span><span>maaş (brüt)</span><span>durum</span><span style={{ textAlign: "center" }}>işlem</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {filtered.map((e) => {
+              const ini = ((e.first_name?.[0] || "") + (e.last_name?.[0] || "")).toUpperCase();
+              return (
+                <div key={e.id} style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 10, padding: "12px 14px", display: "grid", gridTemplateColumns: "1.6fr 1.2fr 1fr 0.9fr 70px", gap: 12, alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: C.greenSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, color: C.greenDark }}>{ini || "–"}</div>
+                    <div style={{ minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 500, color: C.ink }}>{e.first_name} {e.last_name}</div><div style={{ fontSize: 9.5, color: C.textHint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.email || "—"}</div></div>
+                  </div>
+                  <span style={{ fontSize: 12, color: "#3C3A36" }}>{e.position || "—"}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.ink }}>{fmtMoney(e.base_salary)}</span>
+                  <span>{e.is_active !== false
+                    ? <span style={{ fontSize: 9, color: C.greenDark, background: C.greenSoft, padding: "2px 9px", borderRadius: 6, fontWeight: 600 }}>aktif</span>
+                    : <span style={{ fontSize: 9, color: C.textFaint, background: C.neutralBg, padding: "2px 9px", borderRadius: 6, fontWeight: 600 }}>ayrıldı</span>}</span>
+                  <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
+                    <button onClick={() => openDetail(e)} title="Düzenle" style={{ width: 27, height: 27, borderRadius: 7, border: `0.5px solid ${C.border}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-pencil" style={{ fontSize: 13, color: C.textMuted }} aria-hidden="true" /></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* bilgi serit */}
+      <div style={{ marginTop: 16, padding: "11px 14px", background: C.neutralBg, borderRadius: 9, display: "flex", alignItems: "center", gap: 8 }}>
+        <i className="ti ti-shield-check" style={{ fontSize: 15, color: C.greenDark }} aria-hidden="true" />
+        <span style={{ fontSize: 10.5, color: C.textMuted, lineHeight: 1.5 }}>Sadece kendi şubenizin personelini görür ve yönetirsiniz. Çıkarma işlemi şifre onayı ister.</span>
+      </div>
+
+      {/* === EKLE MODAL === */}
+      {showAdd && (
+        <Modal onClose={() => setShowAdd(false)} title="Yeni Personel">
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Ad *</label><input style={inputStyle} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Soyad *</label><input style={inputStyle} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /></div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>E-posta</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Telefon</label><input style={inputStyle} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} /></div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Brüt Maaş</label><input style={inputStyle} value={form.base_salary} onChange={(e) => setForm({ ...form, base_salary: e.target.value })} placeholder="45000" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Çalışma Tipi</label>
+              <select style={inputStyle} value={form.contract_type} onChange={(e) => setForm({ ...form, contract_type: e.target.value })}>
+                <option value="full_time">Tam Zamanlı</option>
+                <option value="part_time">Yarı Zamanlı</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ marginBottom: 14 }}><label style={labelStyle}>IBAN</label><input style={inputStyle} value={form.bank_iban} onChange={(e) => setForm({ ...form, bank_iban: e.target.value })} placeholder="TR.." /></div>
+          <div style={{ marginBottom: 14, padding: 13, background: C.neutralBg, borderRadius: 10 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.create_user_account} onChange={(e) => setForm({ ...form, create_user_account: e.target.checked })} style={{ width: 16, height: 16, accentColor: C.green, cursor: "pointer" }} />
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: C.ink }}>Giriş hesabı oluştur</div>
+                <div style={{ fontSize: 10.5, color: C.textMuted, marginTop: 1 }}>Çalışan mobil panele giriş yapabilsin (check-in, izin, vardiya).</div>
+              </div>
+            </label>
+            {form.create_user_account && (
+              <div style={{ marginTop: 12 }}>
+                <label style={labelStyle}>Geçici Şifre * (en az 8 karakter)</label>
+                <input style={inputStyle} type="text" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Çalışan sonra değiştirir" />
+                <div style={{ fontSize: 10.5, color: C.textHint, marginTop: 5 }}>Giriş e-postası: {form.email || "(yukarıdaki e-posta)"}</div>
+              </div>
+            )}
+          </div>
+          {formErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{formErr}</div>}
+          <button style={{ ...greenBtn, width: "100%", justifyContent: "center", padding: "11px" }} onClick={addEmployee}>Personel Ekle</button>
+        </Modal>
+      )}
+
+      {/* === DETAY / DUZENLE MODAL === */}
+      {detail && (
+        <Modal onClose={() => { setDetail(null); setEditing(false); }} title={editing ? "Personeli Düzenle" : `${detail.first_name} ${detail.last_name}`}>
+          {!editing ? (
+            <>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 16 }}>
+                <DetailRow label="Pozisyon" value={detail.position || "—"} />
+                <DetailRow label="Departman" value={detail.department || "—"} />
+                <DetailRow label="Brüt Maaş" value={fmtMoney(detail.base_salary)} />
+                <DetailRow label="E-posta" value={detail.email || "—"} />
+                <DetailRow label="Telefon" value={detail.phone || "—"} />
+                <DetailRow label="IBAN" value={detail.bank_iban || "—"} />
+              </div>
+              {msg && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{msg}</div>}
+              {!showTerm ? (
+                <div style={{ display: "flex", gap: 9 }}>
+                  <button style={{ ...greenBtn, flex: 1, justifyContent: "center" }} onClick={() => setEditing(true)}><i className="ti ti-pencil" style={{ fontSize: 14 }} aria-hidden="true" />Düzenle</button>
+                  <button style={{ flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", color: C.dangerInk, border: `1px solid ${C.dangerBorder}`, borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={() => setShowTerm(true)}><i className="ti ti-user-off" style={{ fontSize: 14 }} aria-hidden="true" />İşten Çıkar</button>
+                </div>
+              ) : (
+                <div style={{ background: C.dangerBg, border: `1px solid ${C.dangerBorder}`, borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: C.dangerInk, marginBottom: 8 }}>İşten çıkarmayı onayla</div>
+                  <div style={{ fontSize: 11.5, color: C.textMuted, marginBottom: 10 }}>Bu işlem için şifreni gir. Çalışan pasife alınır.</div>
+                  <input style={{ ...inputStyle, marginBottom: 10 }} type="password" value={termPw} onChange={(e) => setTermPw(e.target.value)} placeholder="Şifren" />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={{ flex: 1, background: C.dangerInk, color: "#fff", border: "none", borderRadius: 8, padding: "9px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={terminate}>Onayla ve Çıkar</button>
+                    <button style={{ flex: 1, background: "#fff", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px", fontSize: 12.5, cursor: "pointer" }} onClick={() => { setShowTerm(false); setTermPw(""); setMsg(""); }}>Vazgeç</button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Ad *</label><input style={inputStyle} value={edit.first_name} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Soyad *</label><input style={inputStyle} value={edit.last_name} onChange={(e) => setEdit({ ...edit, last_name: e.target.value })} /></div>
+              </div>
+              <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={edit.position} onChange={(e) => setEdit({ ...edit, position: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={edit.department} onChange={(e) => setEdit({ ...edit, department: e.target.value })} /></div>
+              </div>
+              <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Brüt Maaş</label><input style={inputStyle} value={edit.base_salary} onChange={(e) => setEdit({ ...edit, base_salary: e.target.value })} /></div>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Telefon</label><input style={inputStyle} value={edit.phone} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></div>
+              </div>
+              <div style={{ marginBottom: 14 }}><label style={labelStyle}>IBAN</label><input style={inputStyle} value={edit.bank_iban} onChange={(e) => setEdit({ ...edit, bank_iban: e.target.value })} /></div>
+              {msg && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{msg}</div>}
+              <div style={{ display: "flex", gap: 9 }}>
+                <button style={{ ...greenBtn, flex: 1, justifyContent: "center" }} onClick={saveEdit}>Kaydet</button>
+                <button style={{ flex: 1, justifyContent: "center", background: "#fff", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 9, padding: "9px 16px", fontSize: 12.5, cursor: "pointer" }} onClick={() => { setEditing(false); setMsg(""); }}>Vazgeç</button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
+      <span style={{ color: C.textFaint }}>{label}</span>
+      <span style={{ color: C.ink, fontWeight: 500 }}>{value}</span>
+    </div>
+  );
+}
+
+function Modal({ title, children, onClose }: { title: string; children: any; onClose: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(17,17,16,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "22px 24px", width: 460, maxWidth: "100%", maxHeight: "86vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.18)" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: C.ink, letterSpacing: "-0.02em" }}>{title}</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.textHint, padding: 4, display: "flex" }}><i className="ti ti-x" style={{ fontSize: 18 }} aria-hidden="true" /></button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
