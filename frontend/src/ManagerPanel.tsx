@@ -154,6 +154,8 @@ export default function ManagerPanel({
             ? <ManagerStaff token={token} branchId={branchId} companyId={user.company_id || ""} branchName={subeAdi} />
             : page === "payroll"
             ? <ManagerBordro token={token} branchId={branchId} branchName={subeAdi} />
+            : page === "inventory"
+            ? <ManagerEnvanter token={token} branchId={branchId} branchName={subeAdi} />
             : <Placeholder title={PAGE_TITLE[page]} branchId={branchId} />}
         </div>
       </main>
@@ -973,6 +975,352 @@ function BordroBarTooltip({ active, payload }: any) {
       <div style={{ color: "#9CA3AF", marginBottom: 2 }}>{p.payload.name}</div>
       <div style={{ fontWeight: 700 }}>₺{Math.round(p.value).toLocaleString("tr-TR")}</div>
     </div>
+  );
+}
+
+
+// ============================================================================
+// Manager Envanter — sube stok yonetimi. Urun listesi (stok seviyeli),
+// kritik stok uyarisi, urun ekle/duzenle/sil, satir-ici +/- stok hareketi.
+// Merkez depo/sevkiyat YOK (o owner isi). Tek sube, izolasyonlu.
+// ============================================================================
+type Category = { id: string; name: string };
+type Product = {
+  id: string; branch_id: string; name: string; unit: string;
+  unit_cost: number; current_stock: number; min_stock_level: number;
+  is_active: boolean; category_id?: string | null; supplier_id?: string | null;
+};
+
+const HAREKET = [
+  { type: "purchase", label: "Alış / Giriş", dir: "+" },
+  { type: "usage", label: "Kullanım / Servis", dir: "−" },
+  { type: "waste", label: "Fire / Bozulma", dir: "−" },
+  { type: "adjustment", label: "Manuel Düzeltme", dir: "±" },
+];
+
+function ManagerEnvanter({ token, branchId, branchName }: { token: string; branchId: string; branchName: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [cat, setCat] = useState<string>("__all__");
+  const [search, setSearch] = useState("");
+
+  // urun ekle modal
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: "", unit: "adet", unit_cost: "", current_stock: "", min_stock_level: "", category_id: "" });
+  const [formErr, setFormErr] = useState("");
+  const [catOpen, setCatOpen] = useState(false);
+  const [showNewCat, setShowNewCat] = useState(false);
+  const [newCat, setNewCat] = useState("");
+
+  // duzenle / hareket modal
+  const [edit, setEdit] = useState<Product | null>(null);
+  const [move, setMove] = useState<{ product: Product; dir: "+" | "-" } | null>(null);
+  const [moveForm, setMoveForm] = useState({ type: "purchase", quantity: "", unit_cost: "", notes: "" });
+  const [moveErr, setMoveErr] = useState("");
+
+  const load = async () => {
+    if (!branchId) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const [pr, cr] = await Promise.all([
+        axios.get(`${API_URL}/inventory/products/branch/${branchId}?t=${Date.now()}`, { headers }),
+        axios.get(`${API_URL}/inventory/categories/branch/${branchId}?t=${Date.now()}`, { headers }),
+      ]);
+      setProducts(Array.isArray(pr.data) ? pr.data : []);
+      setCategories(Array.isArray(cr.data) ? cr.data : []);
+    } catch { setProducts([]); setCategories([]); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [branchId, token]);
+
+  const catName = (id?: string | null) => categories.find((c) => c.id === id)?.name || null;
+
+  const addProduct = async () => {
+    setFormErr("");
+    if (!form.name.trim()) { setFormErr("Ürün adı zorunlu."); return; }
+    try {
+      const payload: any = {
+        branch_id: branchId, name: form.name.trim(), unit: form.unit,
+        unit_cost: parseFloat(form.unit_cost) || 0,
+        current_stock: parseFloat(form.current_stock) || 0,
+        min_stock_level: parseFloat(form.min_stock_level) || 0,
+      };
+      if (form.category_id) payload.category_id = form.category_id;
+      await axios.post(`${API_URL}/inventory/products`, payload, { headers });
+      setShowAdd(false);
+      setForm({ name: "", unit: "adet", unit_cost: "", current_stock: "", min_stock_level: "", category_id: "" });
+      await load();
+    } catch (e: any) { setFormErr(e.response?.data?.detail || "Eklenemedi."); }
+  };
+
+  const addCategory = async () => {
+    const n = newCat.trim();
+    if (!n) return;
+    try {
+      const r = await axios.post(`${API_URL}/inventory/categories`, { branch_id: branchId, name: n }, { headers });
+      setCategories([...categories, r.data]);
+      setForm({ ...form, category_id: r.data.id });
+      setNewCat(""); setShowNewCat(false);
+    } catch { /* */ }
+  };
+
+  const saveEdit = async () => {
+    if (!edit) return;
+    try {
+      await axios.put(`${API_URL}/inventory/products/${edit.id}`, {
+        name: edit.name, unit: edit.unit, unit_cost: edit.unit_cost,
+        min_stock_level: edit.min_stock_level, category_id: edit.category_id || null,
+      }, { headers });
+      setEdit(null);
+      await load();
+    } catch { /* */ }
+  };
+
+  const deleteProduct = async (p: Product) => {
+    try { await axios.delete(`${API_URL}/inventory/products/${p.id}`, { headers }); setEdit(null); await load(); }
+    catch { /* */ }
+  };
+
+  const submitMove = async () => {
+    setMoveErr("");
+    if (!move) return;
+    const qty = parseFloat(moveForm.quantity);
+    if (!qty || qty <= 0) { setMoveErr("Geçerli bir miktar gir."); return; }
+    try {
+      const payload: any = { product_id: move.product.id, branch_id: branchId, type: moveForm.type, quantity: qty };
+      if (moveForm.type === "purchase" && moveForm.unit_cost) payload.unit_cost = parseFloat(moveForm.unit_cost);
+      if (moveForm.notes) payload.notes = moveForm.notes;
+      await axios.post(`${API_URL}/inventory/movements`, payload, { headers });
+      setMove(null); setMoveForm({ type: "purchase", quantity: "", unit_cost: "", notes: "" });
+      await load();
+    } catch (e: any) { setMoveErr(e.response?.data?.detail || "Hareket kaydedilemedi."); }
+  };
+
+  const openMove = (p: Product, dir: "+" | "-") => {
+    setMove({ product: p, dir });
+    setMoveForm({ type: dir === "+" ? "purchase" : "usage", quantity: "", unit_cost: "", notes: "" });
+    setMoveErr("");
+  };
+
+  const fmt = (n?: number | null) => n != null ? "₺" + Number(n).toLocaleString("tr-TR") : "—";
+  const isLow = (p: Product) => p.min_stock_level > 0 && p.current_stock <= p.min_stock_level;
+
+  // istatistikler
+  const active = products.filter((p) => p.is_active !== false);
+  const totalProducts = active.length;
+  const stockValue = active.reduce((a, p) => a + (p.current_stock || 0) * (p.unit_cost || 0), 0);
+  const lowCount = active.filter(isLow).length;
+
+  // kategori cipleri
+  const catCount = new Map<string, number>();
+  active.forEach((p) => { const id = p.category_id || "__none__"; catCount.set(id, (catCount.get(id) || 0) + 1); });
+
+  // filtre
+  const filtered = active.filter((p) => {
+    const okCat = cat === "__all__" || (p.category_id || "__none__") === cat;
+    const q = search.trim().toLowerCase();
+    const okSearch = !q || p.name.toLowerCase().includes(q);
+    return okCat && okSearch;
+  });
+
+  const labelStyle: any = { display: "block", fontSize: 11, color: C.textMuted, marginBottom: 5, fontWeight: 500 };
+  const inputStyle: any = { width: "100%", padding: "8px 11px", fontSize: 13, border: `1px solid ${C.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box", background: "#fff", color: C.ink };
+  const cols = "1.7fr 1fr 1.1fr 0.9fr 96px";
+
+  return (
+    <>
+      {/* === SIYAH BASLIK === */}
+      <div style={{ background: "#0A0A0A", borderRadius: 13, padding: "18px 22px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 11, background: "rgba(34,197,94,0.13)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className="ti ti-box" style={{ fontSize: 22, color: "#2EE06A" }} aria-hidden="true" /></div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 21, fontWeight: 700, color: "#fff", letterSpacing: "-0.02em" }}>Envanter</div>
+            <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branchName} · stok yönetimi</div>
+          </div>
+        </div>
+        <button onClick={() => { setShowAdd(true); setFormErr(""); }} style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "#22C55E", color: "#0A0A0A", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}><i className="ti ti-plus" style={{ fontSize: 16 }} aria-hidden="true" />Ürün ekle</button>
+      </div>
+
+      {/* === STAT KARTLARI === */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
+        <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 11, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11.5, color: C.textFaint }}>Toplam ürün</div>
+          <div style={{ fontSize: 23, fontWeight: 700, color: C.ink, marginTop: 3 }}>{totalProducts}</div>
+        </div>
+        <div style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 11, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11.5, color: C.textFaint }}>Stok değeri</div>
+          <div style={{ fontSize: 23, fontWeight: 700, color: C.ink, marginTop: 3 }}>{fmt(Math.round(stockValue))}</div>
+        </div>
+        <div style={{ background: "#0A0A0A", borderRadius: 11, padding: "14px 16px" }}>
+          <div style={{ fontSize: 11.5, color: lowCount > 0 ? "#F4C430" : "#7A7A78" }}>Kritik stok</div>
+          <div style={{ fontSize: 23, fontWeight: 700, color: "#fff", marginTop: 3 }}>{lowCount}</div>
+        </div>
+      </div>
+
+      {/* === KATEGORI FILTRESI === */}
+      <div style={{ display: "flex", gap: 7, marginBottom: 13, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "#2EE06A", background: "#0A0A0A", padding: "6px 12px", borderRadius: 20 }}><i className="ti ti-category" style={{ fontSize: 13 }} aria-hidden="true" />Kategori</span>
+        <CatChip label="Tümü" count={active.length} active={cat === "__all__"} onClick={() => setCat("__all__")} />
+        {categories.map((c) => (
+          <CatChip key={c.id} label={c.name} count={catCount.get(c.id) || 0} active={cat === c.id} onClick={() => setCat(c.id)} />
+        ))}
+        {catCount.get("__none__") ? <CatChip label="Kategorisiz" count={catCount.get("__none__") || 0} active={cat === "__none__"} onClick={() => setCat("__none__")} /> : null}
+      </div>
+
+      {/* === ARAMA === */}
+      <div style={{ marginBottom: 13 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, padding: "9px 12px" }}>
+          <i className="ti ti-search" style={{ fontSize: 15, color: C.textHint }} aria-hidden="true" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ürün ara…" style={{ border: "none", outline: "none", fontSize: 12.5, flex: 1, background: "transparent", color: C.ink }} />
+        </div>
+      </div>
+
+      {/* === TABLO === */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>Yükleniyor…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>{active.length === 0 ? "Henüz ürün yok. İlk ürünü ekle." : "Bu filtrede ürün yok."}</div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 11, padding: "0 14px 9px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            <span>ürün</span><span>kategori</span><span>stok</span><span>birim maliyet</span><span style={{ textAlign: "center" }}>hareket</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {filtered.map((p) => {
+              const low = isLow(p);
+              return (
+                <div key={p.id} style={{ background: "#fff", border: `0.5px solid ${C.border}`, borderLeft: low ? "2.5px solid #F4C430" : `0.5px solid ${C.border}`, borderRadius: 11, padding: "11px 14px", display: "grid", gridTemplateColumns: cols, gap: 11, alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 9, background: C.neutralBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className="ti ti-package" style={{ fontSize: 16, color: C.textMuted }} aria-hidden="true" /></div>
+                    <div onClick={() => setEdit(p)} style={{ fontSize: 13, fontWeight: 500, color: C.ink, cursor: "pointer" }}>{p.name}</div>
+                  </div>
+                  <span>{catName(p.category_id) ? <span style={{ fontSize: 11, color: "#3C3A36", background: C.neutralBg, padding: "3px 9px", borderRadius: 6 }}>{catName(p.category_id)}</span> : <span style={{ fontSize: 11, color: C.textHint }}>—</span>}</span>
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: low ? "#C2870B" : C.ink }}>{Number(p.current_stock).toLocaleString("tr-TR")}</span>
+                    <span style={{ fontSize: 11, color: C.textHint, marginLeft: 4 }}>{p.unit}</span>
+                    {low && <span style={{ fontSize: 9.5, fontWeight: 600, color: "#C2870B", background: "#FBF1DC", padding: "2px 6px", borderRadius: 5, marginLeft: 6 }}>kritik</span>}
+                  </div>
+                  <span style={{ fontSize: 12.5, color: "#3C3A36" }}>{fmt(p.unit_cost)}</span>
+                  <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
+                    <button onClick={() => openMove(p, "+")} title="Giriş" style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: C.greenSoft, color: C.greenDark, cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                    <button onClick={() => openMove(p, "-")} title="Çıkış" style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: C.dangerBg, color: C.dangerInk, cursor: "pointer", fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <div style={{ marginTop: 18, padding: "11px 14px", background: C.neutralBg, borderRadius: 9, display: "flex", alignItems: "center", gap: 9 }}>
+        <i className="ti ti-info-circle" style={{ fontSize: 15, color: C.textMuted, flexShrink: 0 }} aria-hidden="true" />
+        <span style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}><span style={{ color: C.greenDark, fontWeight: 600 }}>+</span> alış/giriş, <span style={{ color: C.dangerInk, fontWeight: 600 }}>−</span> kullanım/fire. Sarı çizgili ürünler <span style={{ color: "#C2870B", fontWeight: 600 }}>kritik seviyede</span>, sipariş zamanı. Ürün adına tıkla → düzenle.</span>
+      </div>
+
+      {/* === URUN EKLE MODAL === */}
+      {showAdd && (
+        <Modal onClose={() => setShowAdd(false)} title="Yeni Ürün">
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Ürün adı *</label><input style={inputStyle} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Espresso çekirdek" /></div>
+          <div style={{ marginBottom: 12, position: "relative" }}>
+            <label style={labelStyle}>Kategori</label>
+            <div onClick={() => setCatOpen(!catOpen)} style={{ ...inputStyle, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderColor: catOpen ? C.green : C.border }}>
+              <span style={{ color: form.category_id ? C.ink : C.textHint }}>{catName(form.category_id) || "Seç…"}</span>
+              <i className="ti ti-chevron-down" style={{ fontSize: 15, color: C.textMuted }} aria-hidden="true" />
+            </div>
+            {catOpen && (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: `0.5px solid ${C.border}`, borderRadius: 9, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", padding: 5, zIndex: 20, maxHeight: 180, overflowY: "auto" }}>
+                {categories.length === 0 && !showNewCat && <div style={{ padding: "8px 10px", fontSize: 11.5, color: C.textHint }}>Henüz kategori yok.</div>}
+                {categories.map((c) => (
+                  <div key={c.id} onClick={() => { setForm({ ...form, category_id: c.id }); setCatOpen(false); }} style={{ padding: "8px 10px", fontSize: 12.5, color: C.ink, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", background: form.category_id === c.id ? C.greenSoft : "transparent" }}>
+                    <span>{c.name}</span>{form.category_id === c.id && <i className="ti ti-check" style={{ fontSize: 14, color: C.greenDark }} aria-hidden="true" />}
+                  </div>
+                ))}
+                <div style={{ height: "0.5px", background: C.border, margin: "5px 0" }} />
+                <div onClick={() => { setShowNewCat(true); setCatOpen(false); }} style={{ padding: "8px 10px", fontSize: 12.5, color: C.greenDark, fontWeight: 600, borderRadius: 6, display: "flex", alignItems: "center", gap: 7, cursor: "pointer" }}>
+                  <i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />Yeni kategori ekle
+                </div>
+              </div>
+            )}
+          </div>
+          {showNewCat && (
+            <div style={{ background: C.neutralBg, borderRadius: 9, padding: "11px 12px", marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 7, fontWeight: 500 }}>Yeni kategori adı</div>
+              <div style={{ display: "flex", gap: 7 }}>
+                <input value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="Örn. Kahve" style={{ ...inputStyle, flex: 1 }} />
+                <button onClick={addCategory} style={{ background: "#22C55E", color: "#0A0A0A", border: "none", borderRadius: 8, padding: "0 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>Ekle</button>
+                <button onClick={() => { setShowNewCat(false); setNewCat(""); }} style={{ background: "#fff", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 8, padding: "0 12px", fontSize: 12.5, cursor: "pointer" }}>İptal</button>
+              </div>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Başlangıç stoğu</label><input style={inputStyle} value={form.current_stock} onChange={(e) => setForm({ ...form, current_stock: e.target.value })} placeholder="0" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Birim</label>
+              <select style={inputStyle} value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
+                <option value="adet">adet</option><option value="kg">kg</option><option value="gr">gr</option><option value="lt">lt</option><option value="ml">ml</option><option value="paket">paket</option><option value="kutu">kutu</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Birim maliyet (₺)</label><input style={inputStyle} value={form.unit_cost} onChange={(e) => setForm({ ...form, unit_cost: e.target.value })} placeholder="0" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Kritik seviye</label><input style={inputStyle} value={form.min_stock_level} onChange={(e) => setForm({ ...form, min_stock_level: e.target.value })} placeholder="Örn. 5" /></div>
+          </div>
+          {formErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{formErr}</div>}
+          <button style={{ width: "100%", justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "11px", fontSize: 13, fontWeight: 600, cursor: "pointer" }} onClick={addProduct}>Ürün Ekle</button>
+        </Modal>
+      )}
+
+      {/* === DUZENLE MODAL === */}
+      {edit && (
+        <Modal onClose={() => setEdit(null)} title="Ürünü Düzenle">
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Ürün adı</label><input style={inputStyle} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Birim</label>
+              <select style={inputStyle} value={edit.unit} onChange={(e) => setEdit({ ...edit, unit: e.target.value })}>
+                <option value="adet">adet</option><option value="kg">kg</option><option value="gr">gr</option><option value="lt">lt</option><option value="ml">ml</option><option value="paket">paket</option><option value="kutu">kutu</option>
+              </select>
+            </div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Birim maliyet (₺)</label><input style={inputStyle} value={String(edit.unit_cost)} onChange={(e) => setEdit({ ...edit, unit_cost: parseFloat(e.target.value) || 0 })} /></div>
+          </div>
+          <div style={{ marginBottom: 14 }}><label style={labelStyle}>Kritik seviye</label><input style={inputStyle} value={String(edit.min_stock_level)} onChange={(e) => setEdit({ ...edit, min_stock_level: parseFloat(e.target.value) || 0 })} /></div>
+          <div style={{ fontSize: 11, color: C.textHint, marginBottom: 14 }}>Mevcut stok: {Number(edit.current_stock).toLocaleString("tr-TR")} {edit.unit} — stok değişimi için +/− kullan.</div>
+          <div style={{ display: "flex", gap: 9 }}>
+            <button style={{ flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={saveEdit}>Kaydet</button>
+            <button style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", color: C.dangerInk, border: `1px solid ${C.dangerBorder}`, borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={() => deleteProduct(edit)}><i className="ti ti-trash" style={{ fontSize: 14 }} aria-hidden="true" />Sil</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* === STOK HAREKET MODAL === */}
+      {move && (
+        <Modal onClose={() => setMove(null)} title={`${move.product.name} · stok hareketi`}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>Mevcut: <strong style={{ color: C.ink }}>{Number(move.product.current_stock).toLocaleString("tr-TR")} {move.product.unit}</strong></div>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Hareket tipi</label>
+            <select style={inputStyle} value={moveForm.type} onChange={(e) => setMoveForm({ ...moveForm, type: e.target.value })}>
+              {HAREKET.filter((h) => move.dir === "+" ? h.dir === "+" || h.dir === "±" : h.dir === "−" || h.dir === "±").map((h) => (
+                <option key={h.type} value={h.type}>{h.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Miktar ({move.product.unit}) *</label><input style={inputStyle} value={moveForm.quantity} onChange={(e) => setMoveForm({ ...moveForm, quantity: e.target.value })} placeholder="0" /></div>
+          {moveForm.type === "purchase" && (
+            <div style={{ marginBottom: 12 }}><label style={labelStyle}>Birim maliyet (₺) — opsiyonel</label><input style={inputStyle} value={moveForm.unit_cost} onChange={(e) => setMoveForm({ ...moveForm, unit_cost: e.target.value })} placeholder={String(move.product.unit_cost)} /></div>
+          )}
+          <div style={{ marginBottom: 14 }}><label style={labelStyle}>Not — opsiyonel</label><input style={inputStyle} value={moveForm.notes} onChange={(e) => setMoveForm({ ...moveForm, notes: e.target.value })} placeholder="Örn. Tedarikçi X" /></div>
+          {moveErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{moveErr}</div>}
+          <button style={{ width: "100%", justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: move.dir === "+" ? "#22C55E" : C.dangerInk, color: move.dir === "+" ? "#0A0A0A" : "#fff", border: "none", borderRadius: 9, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer" }} onClick={submitMove}>{move.dir === "+" ? "Girişi Kaydet" : "Çıkışı Kaydet"}</button>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function CatChip({ label, count, active, onClick }: { label: string; count: number; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{ padding: "6px 13px", fontSize: 12, fontWeight: active ? 600 : 400, color: active ? "#fff" : "#3C3A36", background: active ? "#1FA85A" : "#fff", border: active ? "none" : `0.5px solid ${C.border}`, borderRadius: 20, cursor: "pointer" }}>
+      {label} <span style={{ color: active ? "rgba(255,255,255,0.75)" : C.textHint }}>{count}</span>
+    </button>
   );
 }
 
