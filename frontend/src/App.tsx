@@ -7,6 +7,37 @@ import ManagerPanel from "./ManagerPanel";
 
 const API_URL = "http://127.0.0.1:8000/api/v1";
 
+// ============================================================================
+// GLOBAL HATA LOGLAMA — her API hatasini console + backend log'a gonderir
+// ============================================================================
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    try {
+      const cfg = error?.config || {};
+      const res = error?.response;
+      const info = {
+        level: "error",
+        message: error?.message || "request failed",
+        url: (cfg.method ? cfg.method.toUpperCase() + " " : "") + (cfg.url || ""),
+        status: res?.status || 0,
+        detail: typeof res?.data?.detail === "string"
+          ? res.data.detail
+          : JSON.stringify(res?.data?.detail || res?.data || {}),
+      };
+      // konsola detayli yaz
+      console.error("[API ERROR]", info.status, info.url, "->", info.detail, "| gonderilen:", cfg.data);
+      // backend log'a gonder (sessiz, hata olsa da akisi bozma)
+      fetch(`${API_URL}/_log/frontend`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...info, detail: info.detail + " | sent=" + (cfg.data || "") }),
+      }).catch(() => {});
+    } catch (_) { /* loglama hata akisini bozmasin */ }
+    return Promise.reject(error);
+  }
+);
+
 type User = {
   id: string;
   first_name: string;

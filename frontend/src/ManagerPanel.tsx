@@ -156,6 +156,8 @@ export default function ManagerPanel({
             ? <ManagerBordro token={token} branchId={branchId} branchName={subeAdi} />
             : page === "inventory"
             ? <ManagerEnvanter token={token} branchId={branchId} branchName={subeAdi} />
+            : page === "shifts"
+            ? <ManagerVardiya token={token} branchId={branchId} branchName={subeAdi} />
             : <Placeholder title={PAGE_TITLE[page]} branchId={branchId} />}
         </div>
       </main>
@@ -1321,6 +1323,471 @@ function CatChip({ label, count, active, onClick }: { label: string; count: numb
     <button onClick={onClick} style={{ padding: "6px 13px", fontSize: 12, fontWeight: active ? 600 : 400, color: active ? "#fff" : "#3C3A36", background: active ? "#1FA85A" : "#fff", border: active ? "none" : `0.5px solid ${C.border}`, borderRadius: 20, cursor: "pointer" }}>
       {label} <span style={{ color: active ? "rgba(255,255,255,0.75)" : C.textHint }}>{count}</span>
     </button>
+  );
+}
+
+
+// ============================================================================
+// Manager Vardiya — calisan x gun matrisi. Sol calisanlar, ust 7 gun,
+// kesisimde o kisinin o gunku vardiyasi. Hucreye tikla -> vardiya ata.
+// Backend: shift (branch, title, start/end) + assignment (shift, employee).
+// ============================================================================
+
+// ============================================================================
+// Manager Vardiya v2 — premium calisan x gun matrisi.
+// - Vardiya turleri backend'den (shift-templates), duzenlenebilir + ozel renk
+// - Izin entegrasyonu (leaves): yillik/hastalik/ucretsiz vs, tarih araligi, onayli
+// - Hucreye tikla -> vardiya ata VEYA izin ver
+// ============================================================================
+type Assignment = { id: string; shift_id: string; employee_id: string; status: string };
+type Shift = { id: string; branch_id: string; title: string; start_time: string; end_time: string; status: string; assignments: Assignment[] };
+type VEmp = { id: string; first_name: string; last_name: string; position?: string | null; is_active?: boolean };
+type Template = { id: string; branch_id: string; name: string; start_label: string; end_label: string; color: string };
+type Leave = { id: string; employee_id: string; leave_type: string; start_date: string; end_date: string; status: string };
+
+const GUNLER = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+const AYK = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"];
+
+// renk anahtari -> hex (vardiya turu rengi)
+const COLORS: Record<string, string> = {
+  green: "#22C55E", blue: "#3B82F6", amber: "#F59E0B",
+  purple: "#7C5CCB", red: "#C0564B", gray: "#6B6862",
+};
+const PRESET_COLORS = ["green", "blue", "amber", "purple", "red", "gray"];
+
+// izin tipi -> {etiket, kisa, renk, ikon}
+const LEAVE_TYPES: Record<string, { label: string; short: string; bg: string; ink: string; border: string; icon: string }> = {
+  annual:    { label: "Yıllık ücretli izin", short: "Yıllık",   bg: "#F1ECFB", ink: "#7C5CCB", border: "#E3D9F6", icon: "ti-plane" },
+  sick:      { label: "Hastalık / rapor",     short: "Rapor",    bg: "#FCEBEB", ink: "#C0564B", border: "#F6D9D6", icon: "ti-heartbeat" },
+  unpaid:    { label: "Ücretsiz izin",        short: "Ücretsiz", bg: "#F4F3F0", ink: "#6B6862", border: "#E8E6E0", icon: "ti-wallet-off" },
+  excuse:    { label: "Mazeret izni",         short: "Mazeret",  bg: "#F4F3F0", ink: "#6B6862", border: "#E8E6E0", icon: "ti-info-circle" },
+  maternity: { label: "Doğum / analık",       short: "Doğum",    bg: "#FDEEF5", ink: "#C2568F", border: "#F6D9E8", icon: "ti-baby-carriage" },
+  other:     { label: "Diğer",                short: "İzin",     bg: "#F4F3F0", ink: "#6B6862", border: "#E8E6E0", icon: "ti-dots" },
+};
+
+function pad(n: number) { return n < 10 ? "0" + n : String(n); }
+function ymd(d: Date) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function parseYMD(s: string) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
+
+function ManagerVardiya({ token, branchId, branchName }: { token: string; branchId: string; branchName: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const errMsg = (e: any, fallback: string) => {
+    const d = e?.response?.data?.detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d)) return d.map((x: any) => x?.msg || "").filter(Boolean).join(", ") || fallback;
+    return fallback;
+  };
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [employees, setEmployees] = useState<VEmp[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [leaves, setLeaves] = useState<Leave[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
+
+  // hucre modal
+  const [cell, setCell] = useState<{ emp: VEmp; day: Date } | null>(null);
+  const [mode, setMode] = useState<"shift" | "leave">("shift");
+  const [selTpl, setSelTpl] = useState<string>("");        // secili sablon id
+  const [editTpls, setEditTpls] = useState(false);          // tur duzenleme modu
+  const [leaveType, setLeaveType] = useState("annual");
+  const [leaveStart, setLeaveStart] = useState("");
+  const [leaveEnd, setLeaveEnd] = useState("");
+  const [cellErr, setCellErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // tur ekle/duzenle
+  const [tplModal, setTplModal] = useState<null | "new" | Template>(null);
+  const [tplForm, setTplForm] = useState({ name: "", start: "08:00", end: "16:00", color: "green" });
+
+  function mondayOf(d: Date) { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x; }
+  const weekDays = Array.from({ length: 7 }, (_, i) => { const d = new Date(weekStart); d.setDate(d.getDate() + i); return d; });
+  const today = new Date();
+  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  const load = async () => {
+    if (!branchId) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const [sh, em, tp, lv] = await Promise.all([
+        axios.get(`${API_URL}/shifts/branch/${branchId}?t=${Date.now()}`, { headers }),
+        axios.get(`${API_URL}/employees/branch/${branchId}?t=${Date.now()}`, { headers }),
+        axios.get(`${API_URL}/shift-templates/branch/${branchId}?t=${Date.now()}`, { headers }),
+        axios.get(`${API_URL}/leaves/branch/${branchId}?t=${Date.now()}`, { headers }),
+      ]);
+      setShifts(Array.isArray(sh.data) ? sh.data : []);
+      setEmployees((Array.isArray(em.data) ? em.data : []).filter((e: any) => e.is_active !== false));
+      setTemplates(Array.isArray(tp.data) ? tp.data : []);
+      setLeaves((Array.isArray(lv.data) ? lv.data : []).filter((l: any) => l.status === "approved"));
+    } catch (e) { console.error("[Vardiya load hatası]", e); }
+    setLoading(false);
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [branchId, token]);
+
+  // bir calisanin belli gunku vardiyasi
+  const cellShift = (empId: string, day: Date) => {
+    for (const sh of shifts) {
+      if (!sameDay(new Date(sh.start_time), day)) continue;
+      const a = sh.assignments.find((x) => x.employee_id === empId && x.status !== "rejected");
+      if (a) return { shift: sh, assignment: a };
+    }
+    return null;
+  };
+  // bir calisanin belli gunku izni
+  const cellLeave = (empId: string, day: Date): Leave | null => {
+    for (const l of leaves) {
+      if (l.employee_id !== empId) continue;
+      const s = parseYMD(l.start_date), e = parseYMD(l.end_date);
+      const d0 = new Date(day); d0.setHours(0, 0, 0, 0);
+      if (d0 >= s && d0 <= e) return l;
+    }
+    return null;
+  };
+
+  const colorOf = (sh: Shift) => {
+    const t = templates.find((tp) => tp.name === sh.title);
+    return t ? (COLORS[t.color] || t.color) : "#22C55E";
+  };
+
+  const openCell = (emp: VEmp, day: Date) => {
+    setCell({ emp, day }); setCellErr(""); setEditTpls(false); setBusy(false);
+    const ex = cellShift(emp.id, day);
+    const lv = cellLeave(emp.id, day);
+    if (lv) { setMode("leave"); setLeaveType(lv.leave_type); setLeaveStart(lv.start_date); setLeaveEnd(lv.end_date); }
+    else if (ex) {
+      setMode("shift");
+      const t = templates.find((tp) => tp.name === ex.shift.title);
+      setSelTpl(t ? t.id : "");
+      setLeaveStart(ymd(day)); setLeaveEnd(ymd(day));
+    } else {
+      setMode("shift"); setSelTpl(templates[0]?.id || "");
+      setLeaveType("annual"); setLeaveStart(ymd(day)); setLeaveEnd(ymd(day));
+    }
+  };
+
+  const assignShift = async () => {
+    if (!cell || !selTpl) { setCellErr("Önce vardiya türü seç."); return; }
+    const tpl = templates.find((t) => t.id === selTpl);
+    if (!tpl) { setCellErr("Tür bulunamadı."); return; }
+    setBusy(true); setCellErr("");
+    try {
+      const [sh, sm] = tpl.start_label.split(":").map(Number);
+      const [eh, em] = tpl.end_label.split(":").map(Number);
+      const sd = new Date(cell.day); sd.setHours(sh, sm || 0, 0, 0);
+      const ed = new Date(cell.day); ed.setHours(eh % 24, em || 0, 0, 0);
+      // bitis <= baslangic ise (gece yarisini gecen vardiya) ertesi gune tasi
+      if (ed.getTime() <= sd.getTime()) ed.setDate(ed.getDate() + 1);
+      // ayni gun + ayni baslik shift var mi
+      let target = shifts.find((x) => sameDay(new Date(x.start_time), cell.day) && x.title === tpl.name);
+      if (!target) {
+        const r = await axios.post(`${API_URL}/shifts`, { branch_id: branchId, title: tpl.name, start_time: sd.toISOString(), end_time: ed.toISOString() }, { headers });
+        target = r.data; target!.assignments = [];
+      }
+      const doAssign = async (sid: string, force: boolean) =>
+        axios.post(`${API_URL}/shifts/${sid}/assign`, { employee_ids: [cell.emp.id], ...(force ? { force: true } : {}) }, { headers });
+      const recreateShift = async () => {
+        const r = await axios.post(`${API_URL}/shifts`, { branch_id: branchId, title: tpl.name, start_time: sd.toISOString(), end_time: ed.toISOString() }, { headers });
+        return r.data.id as string;
+      };
+      let targetId = target!.id;
+      try {
+        await doAssign(targetId, false);
+      } catch (err: any) {
+        const st = err?.response?.status;
+        const d = err?.response?.data?.detail || "";
+        if (st === 404) {
+          // BAYAT STATE: shift DB'de yok -> yeniden olustur + tekrar dene
+          targetId = await recreateShift();
+          try {
+            await doAssign(targetId, false);
+          } catch (err2: any) {
+            if (err2?.response?.status === 400) {
+              if (window.confirm("Bu çalışan haftalık 45 saati aşacak.\n\n" + (err2?.response?.data?.detail || "") + "\n\nYine de atamak istiyor musun?")) {
+                await doAssign(targetId, true);
+              } else { setBusy(false); return; }
+            } else { throw err2; }
+          }
+        } else if (st === 400) {
+          // OVERTIME: 45 saat asimi -> onay sor
+          if (window.confirm("Bu çalışan haftalık 45 saati aşacak.\n\n" + d + "\n\nYine de atamak istiyor musun?")) {
+            await doAssign(targetId, true);
+          } else { setBusy(false); return; }
+        } else { throw err; }
+      }
+      setCell(null); await load();
+    } catch (e: any) { setCellErr(errMsg(e, "Atanamadı.")); }
+    setBusy(false);
+  };
+
+  const giveLeave = async () => {
+    if (!cell) return;
+    if (!leaveStart || !leaveEnd) { setCellErr("Tarih aralığı gir."); return; }
+    if (leaveEnd < leaveStart) { setCellErr("Bitiş, başlangıçtan önce olamaz."); return; }
+    setBusy(true); setCellErr("");
+    try {
+      // 1) izin olustur (pending)
+      const r = await axios.post(`${API_URL}/leaves`, {
+        employee_id: cell.emp.id, leave_type: leaveType, start_date: leaveStart, end_date: leaveEnd,
+      }, { headers });
+      // 2) direkt onayla
+      await axios.put(`${API_URL}/leaves/${r.data.id}/review`, { approve: true }, { headers });
+      setCell(null); await load();
+    } catch (e: any) { setCellErr(errMsg(e, "İzin verilemedi.")); }
+    setBusy(false);
+  };
+
+  const removeCellItem = async () => {
+    if (!cell) return;
+    setBusy(true); setCellErr("");
+    try {
+      const lv = cellLeave(cell.emp.id, cell.day);
+      if (lv) {
+        await axios.put(`${API_URL}/leaves/${lv.id}/cancel`, {}, { headers });
+      } else {
+        const ex = cellShift(cell.emp.id, cell.day);
+        if (ex) {
+          if (ex.shift.assignments.length <= 1) await axios.delete(`${API_URL}/shifts/${ex.shift.id}`, { headers });
+          else await axios.put(`${API_URL}/assignments/${ex.assignment.id}`, { status: "rejected" }, { headers });
+        }
+      }
+      setCell(null); await load();
+    } catch (e: any) { setCellErr(errMsg(e, "Kaldırılamadı.")); }
+    setBusy(false);
+  };
+
+  // --- tur sablonu ekle/duzenle/sil ---
+  const openTplNew = () => { setTplForm({ name: "", start: "08:00", end: "16:00", color: "green" }); setTplModal("new"); };
+  const openTplEdit = (t: Template) => { setTplForm({ name: t.name, start: t.start_label, end: t.end_label, color: t.color }); setTplModal(t); };
+  const saveTpl = async () => {
+    if (!tplForm.name.trim()) return;
+    const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return (h === 24 ? 1440 : h * 60) + (m || 0); };
+    if (toMin(tplForm.end) === toMin(tplForm.start)) { alert("Başlangıç ve bitiş aynı olamaz."); return; }
+    try {
+      if (tplModal === "new") {
+        await axios.post(`${API_URL}/shift-templates`, { branch_id: branchId, name: tplForm.name.trim(), start_label: tplForm.start, end_label: tplForm.end, color: tplForm.color }, { headers });
+      } else if (tplModal && typeof tplModal === "object") {
+        // backend'de update yok -> sil + yeniden olustur
+        await axios.delete(`${API_URL}/shift-templates/${tplModal.id}`, { headers });
+        await axios.post(`${API_URL}/shift-templates`, { branch_id: branchId, name: tplForm.name.trim(), start_label: tplForm.start, end_label: tplForm.end, color: tplForm.color }, { headers });
+      }
+      setTplModal(null);
+      const tp = await axios.get(`${API_URL}/shift-templates/branch/${branchId}?t=${Date.now()}`, { headers });
+      setTemplates(Array.isArray(tp.data) ? tp.data : []);
+    } catch { /* */ }
+  };
+  const deleteTpl = async (t: Template) => {
+    try {
+      await axios.delete(`${API_URL}/shift-templates/${t.id}`, { headers });
+      setTemplates(templates.filter((x) => x.id !== t.id));
+      if (selTpl === t.id) setSelTpl("");
+    } catch { /* */ }
+  };
+
+  const prevWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); };
+  const nextWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); };
+  const fmtRange = () => `${weekStart.getDate()}–${weekDays[6].getDate()} ${AYK[weekDays[6].getMonth()]}`;
+
+  const labelStyle: any = { display: "block", fontSize: 10.5, color: C.textMuted, marginBottom: 5, fontWeight: 500 };
+  const inputStyle: any = { width: "100%", padding: "8px 11px", fontSize: 13, border: `1px solid ${C.border}`, borderRadius: 8, outline: "none", boxSizing: "border-box", background: "#fff", color: C.ink };
+  const gridCols = "128px repeat(7,1fr)";
+  const existsItem = cell ? (cellShift(cell.emp.id, cell.day) || cellLeave(cell.emp.id, cell.day)) : null;
+
+  return (
+    <>
+      {/* === SIYAH BASLIK === */}
+      <div style={{ background: "#0A0A0A", borderRadius: 14, padding: "18px 22px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 11, background: "rgba(34,197,94,0.13)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className="ti ti-calendar-week" style={{ fontSize: 22, color: "#2EE06A" }} aria-hidden="true" /></div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 21, fontWeight: 700, color: "#fff", letterSpacing: "-0.02em" }}>Vardiya</div>
+            <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{branchName} · haftalık plan</div>
+          </div>
+        </div>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.08)", borderRadius: 10, padding: "5px 6px", flexShrink: 0 }}>
+          <button onClick={prevWeek} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: "rgba(255,255,255,0.06)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-chevron-left" style={{ fontSize: 15, color: "#fff" }} aria-hidden="true" /></button>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", padding: "0 8px", minWidth: 70, textAlign: "center" }}>{fmtRange()}</span>
+          <button onClick={nextWeek} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: "rgba(255,255,255,0.06)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-chevron-right" style={{ fontSize: 15, color: "#fff" }} aria-hidden="true" /></button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>Yükleniyor…</div>
+      ) : employees.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "50px 0", color: C.textHint, fontSize: 13 }}>Bu şubede aktif çalışan yok. Önce personel ekle.</div>
+      ) : (
+        <>
+          {/* === PREMIUM MATRIS === */}
+          <div style={{ background: "#fff", borderRadius: 16, padding: 6, boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04)", overflowX: "auto" }}>
+            {/* baslik */}
+            <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 4, padding: "6px 6px 10px", minWidth: 720 }}>
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 2, fontSize: 10, fontWeight: 600, color: C.textHint, textTransform: "uppercase", letterSpacing: "0.05em" }}>Ekip</div>
+              {weekDays.map((d, i) => {
+                const isToday = sameDay(d, today);
+                const isSun = i === 6;
+                return (
+                  <div key={i} style={{ textAlign: "center", padding: "6px 0", borderRadius: 10, background: isToday ? "#0A0A0A" : "transparent" }}>
+                    <div style={{ fontSize: 9.5, fontWeight: isToday ? 600 : 500, color: isToday ? "#2EE06A" : (isSun ? "#CFCBC3" : C.textHint), textTransform: "uppercase", letterSpacing: "0.03em" }}>{GUNLER[i]}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: isToday ? "#fff" : (isSun ? "#CFCBC3" : "#3C3A36"), marginTop: 1 }}>{d.getDate()}</div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* satirlar */}
+            {employees.map((emp, ri) => (
+              <div key={emp.id} style={{ display: "grid", gridTemplateColumns: gridCols, gap: 4, padding: ri === employees.length - 1 ? "4px 6px 8px" : "4px 6px", minWidth: 720 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "0 8px" }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: "linear-gradient(135deg,#EEF8F2,#D9F0E2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: C.greenDark, flexShrink: 0 }}>{((emp.first_name?.[0] || "") + (emp.last_name?.[0] || "")).toUpperCase()}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 600, color: "#1A1A18", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{emp.first_name} {emp.last_name?.[0]}.</div>
+                    <div style={{ fontSize: 9, color: "#B0ACA4" }}>{emp.position || "—"}</div>
+                  </div>
+                </div>
+                {weekDays.map((d, ci) => {
+                  const ex = cellShift(emp.id, d);
+                  const lv = cellLeave(emp.id, d);
+                  if (lv) {
+                    const lt = LEAVE_TYPES[lv.leave_type] || LEAVE_TYPES.other;
+                    return (
+                      <div key={ci} onClick={() => openCell(emp, d)} style={{ height: 46, background: lt.bg, border: `1px solid ${lt.border}`, borderRadius: 9, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                        <i className={`ti ${lt.icon}`} style={{ fontSize: 12, color: lt.ink }} aria-hidden="true" />
+                        <span style={{ fontSize: 8.5, fontWeight: 600, color: lt.ink, marginTop: 1 }}>{lt.short}</span>
+                      </div>
+                    );
+                  }
+                  if (ex) {
+                    const col = colorOf(ex.shift);
+                    return (
+                      <div key={ci} onClick={() => openCell(emp, d)} style={{ height: 46, background: col, borderRadius: 9, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: `0 1px 2px ${col}40` }}>
+                        <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff" }}>{pad(new Date(ex.shift.start_time).getHours())}:00</span>
+                        <span style={{ fontSize: 8.5, color: "rgba(255,255,255,0.85)" }}>{pad(new Date(ex.shift.end_time).getHours())}:00</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={ci} onClick={() => openCell(emp, d)} style={{ height: 46, background: "#FBFBFA", border: "1px dashed #E2E0DA", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                      <i className="ti ti-plus" style={{ fontSize: 13, color: "#D6D2CA" }} aria-hidden="true" />
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          {/* lejant */}
+          <div style={{ display: "flex", gap: 13, flexWrap: "wrap", marginTop: 16 }}>
+            {templates.map((t) => (
+              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 11, height: 11, borderRadius: 4, background: COLORS[t.color] || t.color }} />
+                <span style={{ fontSize: 10.5, color: C.textMuted }}>{t.name}</span>
+              </div>
+            ))}
+            {["annual", "sick", "unpaid"].map((k) => {
+              const lt = LEAVE_TYPES[k];
+              return (
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 11, height: 11, borderRadius: 4, background: lt.bg, border: `1px solid ${lt.border}` }} />
+                  <span style={{ fontSize: 10.5, color: lt.ink, fontWeight: 600 }}>{lt.short}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* === HUCRE MODAL === */}
+      {cell && (
+        <Modal onClose={() => setCell(null)} title={`${cell.emp.first_name} ${cell.emp.last_name} · ${GUNLER[(cell.day.getDay() + 6) % 7]} ${cell.day.getDate()}`}>
+          {/* durum secimi */}
+          <div style={{ fontSize: 10.5, color: C.textMuted, marginBottom: 6, fontWeight: 500 }}>Durum</div>
+          <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
+            <button onClick={() => setMode("shift")} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: mode === "shift" ? `1.5px solid ${C.greenDark}` : `1px solid ${C.border}`, background: mode === "shift" ? C.greenSoft : "#fff", cursor: "pointer" }}>
+              <i className="ti ti-clock" style={{ fontSize: 14, color: mode === "shift" ? C.greenDark : C.textHint }} aria-hidden="true" />
+              <div style={{ fontSize: 11, fontWeight: 600, color: mode === "shift" ? C.greenDark : "#3C3A36", marginTop: 1 }}>Vardiya</div>
+            </button>
+            <button onClick={() => setMode("leave")} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: mode === "leave" ? "1.5px solid #7C5CCB" : `1px solid ${C.border}`, background: mode === "leave" ? "#F1ECFB" : "#fff", cursor: "pointer" }}>
+              <i className="ti ti-beach" style={{ fontSize: 14, color: mode === "leave" ? "#7C5CCB" : C.textHint }} aria-hidden="true" />
+              <div style={{ fontSize: 11, fontWeight: 600, color: mode === "leave" ? "#7C5CCB" : "#3C3A36", marginTop: 1 }}>İzin</div>
+            </button>
+          </div>
+
+          {mode === "shift" ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 10.5, color: C.textMuted, fontWeight: 500 }}>Vardiya türü</span>
+                {templates.length > 0 && <span onClick={() => setEditTpls(!editTpls)} style={{ fontSize: 10, color: C.greenDark, fontWeight: 600, cursor: "pointer" }}>{editTpls ? "Bitti" : "Düzenle"}</span>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                {templates.map((t) => {
+                  const col = COLORS[t.color] || t.color;
+                  return (
+                    <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <button onClick={() => !editTpls && setSelTpl(t.id)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 11px", borderRadius: 8, border: selTpl === t.id && !editTpls ? `1.5px solid ${col}` : `1px solid ${C.border}`, background: selTpl === t.id && !editTpls ? col + "18" : "#fff", cursor: "pointer" }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 7 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: col }} /><span style={{ fontSize: 12, fontWeight: 600, color: C.ink }}>{t.name}</span></span>
+                        <span style={{ fontSize: 10, color: C.textMuted }}>{t.start_label}–{t.end_label}</span>
+                      </button>
+                      {editTpls && <>
+                        <button onClick={() => openTplEdit(t)} style={{ width: 30, height: 30, borderRadius: 7, border: `1px solid ${C.border}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-pencil" style={{ fontSize: 13, color: C.textMuted }} aria-hidden="true" /></button>
+                        <button onClick={() => deleteTpl(t)} style={{ width: 30, height: 30, borderRadius: 7, border: `1px solid ${C.dangerBorder}`, background: C.dangerBg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-trash" style={{ fontSize: 13, color: C.dangerInk }} aria-hidden="true" /></button>
+                      </>}
+                    </div>
+                  );
+                })}
+                <button onClick={openTplNew} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 11px", borderRadius: 8, border: "1px dashed #C9C5BD", background: "#fff", cursor: "pointer", justifyContent: "center" }}><i className="ti ti-plus" style={{ fontSize: 13, color: C.greenDark }} aria-hidden="true" /><span style={{ fontSize: 11.5, fontWeight: 600, color: C.greenDark }}>Yeni tür ekle</span></button>
+              </div>
+              {cellErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{cellErr}</div>}
+              <div style={{ display: "flex", gap: 9 }}>
+                <button disabled={busy} style={{ flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 12.5, fontWeight: 600, cursor: busy ? "wait" : "pointer" }} onClick={assignShift}>{existsItem ? "Güncelle" : "Vardiya Ata"}</button>
+                {existsItem && <button disabled={busy} style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", color: C.dangerInk, border: `1px solid ${C.dangerBorder}`, borderRadius: 9, padding: "10px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={removeCellItem}><i className="ti ti-trash" style={{ fontSize: 14 }} aria-hidden="true" />Kaldır</button>}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label style={labelStyle}>İzin türü</label>
+                <select style={inputStyle} value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
+                  {Object.entries(LEAVE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Başlangıç</label><input style={inputStyle} type="date" value={leaveStart} onChange={(e) => setLeaveStart(e.target.value)} /></div>
+                <div style={{ flex: 1 }}><label style={labelStyle}>Bitiş</label><input style={inputStyle} type="date" value={leaveEnd} onChange={(e) => setLeaveEnd(e.target.value)} /></div>
+              </div>
+              <div style={{ fontSize: 10, color: "#7C5CCB", background: "#F1ECFB", padding: "7px 10px", borderRadius: 7, marginBottom: 12 }}>Onaylı izin olarak kaydedilecek.</div>
+              {cellErr && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>{cellErr}</div>}
+              <div style={{ display: "flex", gap: 9 }}>
+                <button disabled={busy} style={{ flex: 1, justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: "#7C5CCB", color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 12.5, fontWeight: 600, cursor: busy ? "wait" : "pointer" }} onClick={giveLeave}>{existsItem && cellLeave(cell.emp.id, cell.day) ? "Güncelle" : "İzni Onayla"}</button>
+                {existsItem && <button disabled={busy} style={{ justifyContent: "center", display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", color: C.dangerInk, border: `1px solid ${C.dangerBorder}`, borderRadius: 9, padding: "10px 14px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={removeCellItem}><i className="ti ti-trash" style={{ fontSize: 14 }} aria-hidden="true" />Kaldır</button>}
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {/* === TUR EKLE/DUZENLE MODAL === */}
+      {tplModal && (
+        <Modal onClose={() => setTplModal(null)} title={tplModal === "new" ? "Yeni vardiya türü" : "Türü düzenle"}>
+          <div style={{ marginBottom: 12 }}><label style={labelStyle}>Ad</label><input style={inputStyle} value={tplForm.name} onChange={(e) => setTplForm({ ...tplForm, name: e.target.value })} placeholder="Örn. Ara vardiya" /></div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Başlangıç</label><input style={inputStyle} type="time" value={tplForm.start} onChange={(e) => setTplForm({ ...tplForm, start: e.target.value })} /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Bitiş</label><input style={inputStyle} type="time" value={tplForm.end} onChange={(e) => setTplForm({ ...tplForm, end: e.target.value })} /></div>
+          </div>
+          <label style={labelStyle}>Renk</label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {PRESET_COLORS.map((c) => (
+              <span key={c} onClick={() => setTplForm({ ...tplForm, color: c })} style={{ width: 30, height: 30, borderRadius: 8, background: COLORS[c], cursor: "pointer", boxShadow: tplForm.color === c ? `0 0 0 2.5px ${COLORS[c]}55` : "none" }} />
+            ))}
+            <label style={{ width: 30, height: 30, borderRadius: 8, cursor: "pointer", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px dashed #C9C5BD", background: "conic-gradient(from 0deg, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000)", overflow: "hidden" }}>
+              <i className="ti ti-plus" style={{ fontSize: 14, color: "#fff", filter: "drop-shadow(0 0 1px rgba(0,0,0,0.6))" }} aria-hidden="true" />
+              <input type="color" value={tplForm.color.startsWith("#") ? tplForm.color : "#22C55E"} onChange={(e) => setTplForm({ ...tplForm, color: e.target.value })} style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }} />
+            </label>
+          </div>
+          <div style={{ background: (COLORS[tplForm.color] || tplForm.color) + "18", borderRadius: 8, padding: "9px 12px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 11, color: COLORS[tplForm.color] || tplForm.color }}>Önizleme</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: COLORS[tplForm.color] || tplForm.color }}>{tplForm.name || "Tür"} · {tplForm.start}–{tplForm.end}</span>
+          </div>
+          <button style={{ width: "100%", background: C.ink, color: "#fff", border: "none", borderRadius: 9, padding: "10px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }} onClick={saveTpl}>Türü Kaydet</button>
+        </Modal>
+      )}
+    </>
   );
 }
 

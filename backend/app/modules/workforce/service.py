@@ -107,7 +107,7 @@ class WorkforceService:
                 for s in assigned_shifts.scalars().all()
             )
             shift_hours = (shift.end_time - shift.start_time).total_seconds() / 3600
-            if total_hours + shift_hours > 45:
+            if not data.force and total_hours + shift_hours > 45:
                 raise OvertimeException(
                     f"Employee would exceed 45 weekly hours. Current: {total_hours:.1f}h, This shift: {shift_hours:.1f}h."
                 )

@@ -149,3 +149,57 @@ async def update_assignment(
     if current_user.role in ADMIN_ROLES:
         await assert_employee_company_access(db, current_user, target)
     return await workforce_service.update_assignment(db, assignment_id, data)
+
+
+# ============================================================================
+# Shift Templates — manager-defined reusable shift types (branch-scoped)
+# ============================================================================
+from app.modules.workforce.models import ShiftTemplate
+from app.modules.workforce.schemas import ShiftTemplateCreateSchema, ShiftTemplateResponseSchema
+from sqlalchemy import select as _select
+
+
+@router.get("/shift-templates/branch/{branch_id}", response_model=list[ShiftTemplateResponseSchema])
+async def list_shift_templates(
+    branch_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(staff),
+):
+    await assert_branch_access(db, current_user, branch_id)
+    rows = (await db.execute(
+        _select(ShiftTemplate).where(ShiftTemplate.branch_id == branch_id).order_by(ShiftTemplate.start_label)
+    )).scalars().all()
+    return rows
+
+
+@router.post("/shift-templates", response_model=ShiftTemplateResponseSchema)
+async def create_shift_template(
+    data: ShiftTemplateCreateSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(staff),
+):
+    await assert_branch_access(db, current_user, data.branch_id)
+    tpl = ShiftTemplate(
+        branch_id=data.branch_id, name=data.name,
+        start_label=data.start_label, end_label=data.end_label, color=data.color,
+    )
+    db.add(tpl)
+    await db.flush()
+    await db.commit()
+    await db.refresh(tpl)
+    return tpl
+
+
+@router.delete("/shift-templates/{template_id}")
+async def delete_shift_template(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(staff),
+):
+    tpl = (await db.execute(_select(ShiftTemplate).where(ShiftTemplate.id == template_id))).scalar_one_or_none()
+    if tpl is None:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    await assert_branch_access(db, current_user, tpl.branch_id)
+    await db.delete(tpl)
+    await db.commit()
+    return {"deleted": True}

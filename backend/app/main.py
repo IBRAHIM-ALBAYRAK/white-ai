@@ -84,6 +84,66 @@ async def reject_blacklisted_tokens(request: Request, call_next):
 
 
 # --- Core / admin routers ---
+
+# ============================================================================
+# LOGGING & ERROR CAPTURE — tum hatalari logs/ klasorune yazar
+# ============================================================================
+import logging as _logging
+import os as _os
+import traceback as _traceback
+from fastapi import status as _status
+from fastapi.responses import JSONResponse as _JSONResponse
+from pydantic import BaseModel as _BaseModel
+
+_LOG_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "logs")
+_os.makedirs(_LOG_DIR, exist_ok=True)
+
+# Backend logger (dosya + konsol)
+_be_logger = _logging.getLogger("whiteai.backend")
+_be_logger.setLevel(_logging.INFO)
+if not _be_logger.handlers:
+    _fh = _logging.FileHandler(_os.path.join(_LOG_DIR, "backend.log"), encoding="utf-8")
+    _fh.setFormatter(_logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    _be_logger.addHandler(_fh)
+
+# Frontend logger (ayri dosya)
+_fe_logger = _logging.getLogger("whiteai.frontend")
+_fe_logger.setLevel(_logging.INFO)
+if not _fe_logger.handlers:
+    _ffh = _logging.FileHandler(_os.path.join(_LOG_DIR, "frontend.log"), encoding="utf-8")
+    _ffh.setFormatter(_logging.Formatter("%(asctime)s | %(message)s"))
+    _fe_logger.addHandler(_ffh)
+
+
+# --- Tum HTTP hatalarini (4xx/5xx) yakala ve logla ---
+@app.middleware("http")
+async def _log_errors_middleware(request: Request, call_next):
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        tb = _traceback.format_exc()
+        _be_logger.error(f"500 {request.method} {request.url.path} | {type(exc).__name__}: {exc}\n{tb}")
+        raise
+    if response.status_code >= 400:
+        # request body'yi guvenli al (her zaman okunamaz)
+        _be_logger.warning(f"{response.status_code} {request.method} {request.url.path}")
+    return response
+
+
+# --- Frontend hata gonderme endpoint'i ---
+class _FrontendLogSchema(_BaseModel):
+    level: str = "error"
+    message: str
+    url: str = ""
+    status: int = 0
+    detail: str = ""
+
+@app.post("/api/v1/_log/frontend")
+async def _log_frontend(data: _FrontendLogSchema):
+    _fe_logger.info(f"[{data.level}] {data.status} {data.url} | {data.message} | {data.detail}")
+    return {"logged": True}
+
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(company_router, prefix="/api/v1")
 app.include_router(workforce_router, prefix="/api/v1")

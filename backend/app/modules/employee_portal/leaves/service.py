@@ -85,6 +85,8 @@ class LeaveService:
         )
         db.add(leave)
         await db.flush()
+        await db.commit()
+        await db.refresh(leave)
         return leave
 
     # ── Read ─────────────────────────────────────────────────────────────────
@@ -156,6 +158,8 @@ class LeaveService:
 
         db.add(leave)
         await db.flush()
+        await db.commit()
+        await db.refresh(leave)
         return leave
 
     # ── Cancel (employee withdraws own request) ──────────────────────────────
