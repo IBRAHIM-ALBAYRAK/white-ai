@@ -23,6 +23,8 @@ class Company(Base):
     legal_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # "brand" (marka sahibi), "sub" (alt şirket: kendi şube veya franchise), "standalone" (tek başına)
     company_type: Mapped[str] = mapped_column(String(20), nullable=False, default="standalone")
+    # Hukuki/vergi tipi: limited | anonim | sahis
+    legal_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="limited", default="limited")
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     phone: Mapped[str] = mapped_column(String(20), nullable=True)
     address: Mapped[str] = mapped_column(String(500), nullable=True)

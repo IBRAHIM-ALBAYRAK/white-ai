@@ -36,6 +36,7 @@ class FinanceCategory(Base):
     company_id = Column(String, ForeignKey("companies.id"), nullable=False)
     name       = Column(String, nullable=False)
     kind       = Column(SAEnum(FinanceKind), nullable=False)
+    scope      = Column(String(10), nullable=True)  # "branch" | "brand" | NULL (atanmamis)
     is_active  = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     entries    = relationship("FinanceEntry", back_populates="category", lazy="select")

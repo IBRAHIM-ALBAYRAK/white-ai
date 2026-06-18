@@ -89,56 +89,6 @@ async def get_employee_by_user(
 
 # --- Single / update ---
 
-# ── Merkez (sube-siz) personel + Franchise roster (KVKK: hassas alanlar gizli) ──
-from sqlalchemy import select as _sa_select
-from app.modules.employees.models import Employee as _Emp
-from app.modules.company.models import OversightLink as _OvLink
-from app.modules.employees.schemas import FranchiseEmployeeSchema
-
-_owner_read = require_role(UserRole.SUPERADMIN, UserRole.OWNER)
-
-
-@router.get("/employees/merkez", response_model=list[EmployeeResponseSchema])
-async def list_merkez_employees(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(_owner_read),
-):
-    """Markanin sube-siz (branch_id IS NULL) kendi personeli. Owner tam yetki."""
-    rows = (await db.execute(
-        _sa_select(_Emp).where(
-            _Emp.company_id == current_user.company_id,
-            _Emp.branch_id.is_(None),
-            _Emp.is_active == True,
-        ).order_by(_Emp.first_name)
-    )).scalars().all()
-    return rows
-
-
-@router.get("/employees/franchise-roster/{sub_company_id}", response_model=list[FranchiseEmployeeSchema])
-async def franchise_roster(
-    sub_company_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(_owner_read),
-):
-    """Franchise personeli — SADECE isim/pozisyon/durum. Maas/IBAN/TC donmez (KVKK)."""
-    link = (await db.execute(
-        _sa_select(_OvLink).where(
-            _OvLink.brand_company_id == current_user.company_id,
-            _OvLink.sub_company_id == sub_company_id,
-            _OvLink.link_type == "franchise",
-        )
-    )).scalar_one_or_none()
-    if link is None:
-        raise HTTPException(status_code=403, detail="Bu franchise gozetim kapsaminizda degil.")
-    rows = (await db.execute(
-        _sa_select(_Emp).where(
-            _Emp.company_id == sub_company_id,
-            _Emp.is_active == True,
-        ).order_by(_Emp.first_name)
-    )).scalars().all()
-    return rows
-
-
 @router.get("/employees/{employee_id}", response_model=EmployeeResponseSchema)
 async def get_employee(
     employee_id: str,

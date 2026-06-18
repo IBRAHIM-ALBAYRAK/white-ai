@@ -58,17 +58,3 @@ class RunBranchResultSchema(BaseModel):
     ok: bool
     error: str | None = None
     payslip: PayslipResponseSchema | None = None
-
-
-# ── Merkez (sube-siz personel) + Franchise toplamlari ──
-class RunMerkezSchema(BaseModel):
-    year: int
-    month: int
-
-
-class FranchiseTotalSchema(BaseModel):
-    company_id: str
-    name: str
-    employee_count: int
-    calculated_count: int
-    total_employer_cost: float

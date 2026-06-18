@@ -47,15 +47,16 @@ def _company_id(user: User) -> str:
 @router.get("/categories", response_model=list[FinanceCategoryResponseSchema])
 async def list_categories(
     kind: str | None = Query(default=None),
+    scope: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
-    cats = await finance_service.list_categories(db, _company_id(current_user), kind)
+    cats = await finance_service.list_categories(db, _company_id(current_user), kind, scope)
     return [
         FinanceCategoryResponseSchema(
             id=c.id, company_id=c.company_id, name=c.name,
             kind=c.kind.value if hasattr(c.kind, "value") else c.kind,
-            is_active=c.is_active, created_at=c.created_at,
+            scope=getattr(c, "scope", None), is_active=c.is_active, created_at=c.created_at,
         ) for c in cats
     ]
 
@@ -66,11 +67,11 @@ async def create_category(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
-    c = await finance_service.create_category(db, _company_id(current_user), data.name, data.kind)
+    c = await finance_service.create_category(db, _company_id(current_user), data.name, data.kind, data.scope)
     return FinanceCategoryResponseSchema(
         id=c.id, company_id=c.company_id, name=c.name,
         kind=c.kind.value if hasattr(c.kind, "value") else c.kind,
-        is_active=c.is_active, created_at=c.created_at,
+        scope=getattr(c, "scope", None), is_active=c.is_active, created_at=c.created_at,
     )
 
 
@@ -91,11 +92,12 @@ async def list_entries(
     branch_id: str | None = Query(default=None),
     kind: str | None = Query(default=None),
     include_deleted: bool = Query(default=False),
+    scope: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(staff),
 ):
     return await finance_service.list_entries(
-        db, _company_id(current_user), year, month, branch_id, kind, include_deleted
+        db, _company_id(current_user), year, month, branch_id, kind, include_deleted, scope
     )
 
 
@@ -170,3 +172,18 @@ async def overview(
     current_user: User = Depends(staff),
 ):
     return await finance_service.overview(db, _company_id(current_user), year, month)
+
+
+@router.get("/tax-profile")
+async def tax_profile(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(staff),
+):
+    from sqlalchemy import select
+    from app.modules.company.models import Company
+    cid = _company_id(current_user)
+    res = await db.execute(select(Company).where(Company.id == cid))
+    c = res.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404, detail="Sirket bulunamadi.")
+    return {"company_id": c.id, "name": c.name, "legal_name": c.legal_name, "legal_type": getattr(c, "legal_type", "limited") or "limited"}

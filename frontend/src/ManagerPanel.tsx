@@ -158,6 +158,10 @@ export default function ManagerPanel({
             ? <ManagerEnvanter token={token} branchId={branchId} branchName={subeAdi} />
             : page === "shifts"
             ? <ManagerVardiya token={token} branchId={branchId} branchName={subeAdi} />
+            : page === "finance"
+            ? <ManagerFinans token={token} branchId={branchId} branchName={subeAdi} />
+            : page === "ledger"
+            ? <ManagerLedger token={token} branchId={branchId} branchName={subeAdi} />
             : <Placeholder title={PAGE_TITLE[page]} branchId={branchId} />}
         </div>
       </main>
@@ -1790,6 +1794,667 @@ function ManagerVardiya({ token, branchId, branchName }: { token: string; branch
     </>
   );
 }
+
+// ============================================================================
+// Manager Finans — sube finans ozeti (SALT-OKUNUR) + vergi motoru.
+// Veri: Gelir/Gider kayitlari (bu sube) + payroll + sirket legal_type.
+// Net = Gelir - Giderler - Devlet/Vergi.  Devlet/Vergi = TAHMINI.
+// ============================================================================
+type FinGroup = { id: string; name: string; total: number };
+
+const AYLAR_TR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+const tl = (n: number) => "₺" + Math.round(n).toLocaleString("tr-TR");
+const OUT_COLORS = ["#C0564B", "#D9803F", "#A98C5A", "#8A867F", "#B4B2A9", "#9A6B5A", "#7C8B6B", "#6B6862"];
+const LEGAL_LABEL: Record<string, string> = { limited: "Limited Şti.", anonim: "Anonim Şti.", sahis: "Şahıs" };
+
+// 2026 vergi config — yıllık güncellenir. Sektör SADECE kurumlar oranını değiştirir.
+const SECTORS: { id: string; label: string; kurumlar: number }[] = [
+  { id: "yeme_icme", label: "Yeme-içme (F&B)", kurumlar: 0.25 },
+  { id: "ticaret", label: "Ticaret / Perakende", kurumlar: 0.25 },
+  { id: "hizmet", label: "Hizmet", kurumlar: 0.25 },
+  { id: "uretim", label: "Üretim / İmalat", kurumlar: 0.125 },
+  { id: "tarim", label: "Tarım / Hayvancılık", kurumlar: 0.125 },
+  { id: "finans", label: "Finans / Bankacılık / Sigorta", kurumlar: 0.30 },
+  { id: "insaat", label: "İnşaat / Gayrimenkul", kurumlar: 0.25 },
+  { id: "bilisim", label: "Bilişim / Teknoloji", kurumlar: 0.25 },
+  { id: "diger", label: "Diğer", kurumlar: 0.25 },
+];
+const SECTOR_KV: Record<string, number> = Object.fromEntries(SECTORS.map((s) => [s.id, s.kurumlar]));
+const SECTOR_LABEL: Record<string, string> = Object.fromEntries(SECTORS.map((s) => [s.id, s.label]));
+const STOPAJ = 0.15;
+// Şahıs / ticari kazanç (ücret dışı) artan oranlı tarife. Üst dilimler mali müşavire doğrulatılacak.
+const SAHIS_BRACKETS = [
+  { upTo: 190000, rate: 0.15 },
+  { upTo: 400000, rate: 0.20 },
+  { upTo: 1000000, rate: 0.27 },
+  { upTo: 5300000, rate: 0.35 },
+  { upTo: Infinity, rate: 0.40 },
+];
+
+// Aylık vergi öncesi kâr (x) → tahmini devlet+vergi yükü. Sektör sadece kurumsalı etkiler.
+function computeFinTax(legalType: string, sector: string, x: number) {
+  if (x <= 0) return { kurumlar: 0, stopaj: 0, gelir: 0, total: 0, net: x };
+  if (legalType === "sahis") {
+    const annual = x * 12;
+    let tax = 0, prev = 0;
+    for (const b of SAHIS_BRACKETS) {
+      if (annual <= prev) break;
+      tax += (Math.min(annual, b.upTo) - prev) * b.rate;
+      prev = b.upTo;
+    }
+    const monthly = tax / 12;
+    return { kurumlar: 0, stopaj: 0, gelir: monthly, total: monthly, net: x - monthly };
+  }
+  const kvRate = SECTOR_KV[sector] ?? 0.25;
+  const kurumlar = x * kvRate;
+  const stopaj = (x - kurumlar) * STOPAJ;
+  const total = kurumlar + stopaj;
+  return { kurumlar, stopaj, gelir: 0, total, net: x - total };
+}
+
+function ManagerFinans({ token, branchId }: { token: string; branchId: string; branchName: string }) {
+  const realNow = new Date();
+  const [year, setYear] = useState(realNow.getFullYear());
+  const [month, setMonth] = useState(realNow.getMonth() + 1);
+  const [loading, setLoading] = useState(true);
+  const [incomeCats, setIncomeCats] = useState<FinGroup[]>([]);
+  const [expenseCats, setExpenseCats] = useState<FinGroup[]>([]);
+  const [totalIncome, setTotalIncome] = useState(0);
+  const [totalExpense, setTotalExpense] = useState(0);
+  const [payrollCost, setPayrollCost] = useState(0);
+  const [legalType, setLegalType] = useState("limited");
+  const [sector, setSector] = useState("diger");
+
+  const isFuture = (y: number, m: number) =>
+    y > realNow.getFullYear() || (y === realNow.getFullYear() && m > realNow.getMonth() + 1);
+  const goPrev = () => { let m = month - 1, y = year; if (m < 1) { m = 12; y--; } setMonth(m); setYear(y); };
+  const goNext = () => { let m = month + 1, y = year; if (m > 12) { m = 1; y++; } if (!isFuture(y, m)) { setMonth(m); setYear(y); } };
+  const nextLocked = isFuture(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1);
+
+  useEffect(() => {
+    if (!branchId) { setLoading(false); return; }
+    let alive = true;
+    const headers = { Authorization: `Bearer ${token}` };
+    const ts = Date.now();
+    setLoading(true);
+    (async () => {
+      try {
+        try {
+          const tp = await axios.get(`${API_URL}/finance/tax-profile?t=${ts}`, { headers });
+          if (alive) { setLegalType(tp.data?.legal_type || "limited"); setSector(tp.data?.sector || "diger"); }
+        } catch { if (alive) { setLegalType("limited"); setSector("diger"); } }
+
+        const [incCatR, expCatR] = await Promise.all([
+          axios.get(`${API_URL}/finance/categories?kind=income&t=${ts}`, { headers }),
+          axios.get(`${API_URL}/finance/categories?kind=expense&t=${ts}`, { headers }),
+        ]);
+        const incMap = new Map<string, string>((incCatR.data || []).map((c: any) => [c.id, c.name]));
+        const expMap = new Map<string, string>((expCatR.data || []).map((c: any) => [c.id, c.name]));
+
+        const [incR, expR, payR] = await Promise.all([
+          axios.get(`${API_URL}/finance/entries?year=${year}&month=${month}&branch_id=${branchId}&kind=income&t=${ts}`, { headers }),
+          axios.get(`${API_URL}/finance/entries?year=${year}&month=${month}&branch_id=${branchId}&kind=expense&t=${ts}`, { headers }),
+          axios.get(`${API_URL}/payroll/branch/${branchId}/${year}/${month}?t=${ts}`, { headers }),
+        ]);
+        if (!alive) return;
+
+        const incEntries: any[] = Array.isArray(incR.data) ? incR.data : [];
+        const expEntries: any[] = Array.isArray(expR.data) ? expR.data : [];
+        const groupBy = (entries: any[], nameMap: Map<string, string>): FinGroup[] => {
+          const g = new Map<string, FinGroup>();
+          for (const e of entries) {
+            const cid = e.category_id || "uncat";
+            const cur = g.get(cid) || { id: cid, name: e.category_name || nameMap.get(cid) || "Diğer", total: 0 };
+            cur.total += e.amount || 0;
+            g.set(cid, cur);
+          }
+          return Array.from(g.values()).sort((a, b) => b.total - a.total);
+        };
+        setIncomeCats(groupBy(incEntries, incMap));
+        setExpenseCats(groupBy(expEntries, expMap));
+        setTotalIncome(incEntries.reduce((a, e) => a + (e.amount || 0), 0));
+        setTotalExpense(expEntries.reduce((a, e) => a + (e.amount || 0), 0));
+        const payList: any[] = Array.isArray(payR.data) ? payR.data : [];
+        setPayrollCost(payList.reduce((a, row) => a + (row.employer_cost || row.employerCost || 0), 0));
+      } catch {
+        if (alive) { setIncomeCats([]); setExpenseCats([]); setTotalIncome(0); setTotalExpense(0); setPayrollCost(0); }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [branchId, token, year, month]);
+
+  const giderler = totalExpense + payrollCost;
+  const vergiOncesiKar = totalIncome - giderler;
+  const tax = computeFinTax(legalType, sector, vergiOncesiKar);
+  const devletVergi = tax.total;
+  const toplamGider = giderler + devletVergi;
+  const net = totalIncome - toplamGider;
+
+  const donutData = [
+    ...expenseCats.map((c, i) => ({ name: c.name, value: c.total, color: OUT_COLORS[i % OUT_COLORS.length] })),
+    { name: "Personel maliyeti", value: payrollCost, color: "#C68A12" },
+    { name: "Devlet ve vergi (tahmini)", value: devletVergi, color: "#7C6B9A" },
+  ].filter((d) => d.value > 0);
+
+  const barData = [
+    { name: "Gelir", v: totalIncome, fill: "#1FA85A" },
+    { name: "Giderler", v: giderler, fill: "#C0564B" },
+    { name: "Devlet/Vergi", v: devletVergi, fill: "#7C6B9A" },
+    { name: "Net", v: net, fill: net >= 0 ? "#1FA85A" : "#C0564B" },
+  ];
+
+  const card: any = { background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 18 };
+  const kvPct = Math.round((SECTOR_KV[sector] ?? 0.25) * 100);
+  const taxLine = legalType === "sahis"
+    ? "Şahıs: artan oranlı gelir vergisi (yıllıklandırılmış tahmin), sektörden bağımsız."
+    : `${LEGAL_LABEL[legalType] || "Limited"} · ${SECTOR_LABEL[sector] || "Diğer"}: %${kvPct} kurumlar + %15 stopaj (kâr dağıtılırsa).`;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ background: "#0A0A0A", borderRadius: 16, padding: "20px 22px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+            <div style={{ width: 42, height: 42, borderRadius: 11, background: "rgba(34,197,94,0.13)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className="ti ti-cash" style={{ fontSize: 22, color: "#2EE06A" }} aria-hidden="true" />
+            </div>
+            <div>
+              <div style={{ fontSize: 19, fontWeight: 700, color: "#fff", lineHeight: 1.1 }}>Finans</div>
+              <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 2 }}>{AYLAR_TR[month - 1]} {year} · {LEGAL_LABEL[legalType] || "Şirket"} · {SECTOR_LABEL[sector] || "Diğer"}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: "5px 6px" }}>
+            <button onClick={goPrev} style={{ background: "transparent", border: "none", cursor: "pointer", padding: "3px 5px", display: "flex" }} aria-label="Önceki ay">
+              <i className="ti ti-chevron-left" style={{ fontSize: 17, color: "rgba(255,255,255,0.7)" }} />
+            </button>
+            <span style={{ fontSize: 13, color: "#fff", fontWeight: 500, minWidth: 104, textAlign: "center" }}>{AYLAR_TR[month - 1]} {year}</span>
+            <button onClick={goNext} disabled={nextLocked} style={{ background: "transparent", border: "none", cursor: nextLocked ? "default" : "pointer", padding: "3px 5px", display: "flex", opacity: nextLocked ? 0.3 : 1 }} aria-label="Sonraki ay">
+              <i className="ti ti-chevron-right" style={{ fontSize: 17, color: "#fff" }} />
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.05fr 1fr 1.05fr 1fr 1.2fr", gap: 9 }}>
+          <FinFig icon="ti-arrow-down-left" iconColor="#2EE06A" label="Toplam gelir" value={loading ? "…" : tl(totalIncome)} />
+          <FinFig icon="ti-arrow-up-right" iconColor="#E0816F" label="Giderler" sub="operasyonel + personel" value={loading ? "…" : tl(giderler)} />
+          <FinFig icon="ti-building-bank" iconColor="#B6A6DC" label="Devlet ve vergi" sub="tahmini" value={loading ? "…" : tl(devletVergi)} />
+          <FinFig icon="ti-sum" iconColor="#E0B95C" label="Toplam gider" value={loading ? "…" : tl(toplamGider)} />
+          <div style={{ background: net >= 0 ? "rgba(34,197,94,0.10)" : "rgba(192,86,75,0.12)", border: `1px solid ${net >= 0 ? "rgba(34,197,94,0.25)" : "rgba(192,86,75,0.3)"}`, borderRadius: 12, padding: "13px 15px" }}>
+            <div style={{ fontSize: 11, color: net >= 0 ? "#2EE06A" : "#E0816F", marginBottom: 7, display: "flex", alignItems: "center", gap: 5 }}>
+              <i className={`ti ${net >= 0 ? "ti-trending-up" : "ti-trending-down"}`} style={{ fontSize: 14 }} aria-hidden="true" />Net kâr
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: net >= 0 ? "#2EE06A" : "#E0816F" }}>{loading ? "…" : tl(net)}</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>vergi sonrası</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={card}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, marginBottom: 14 }}>Para nereye gidiyor</div>
+          {toplamGider <= 0 ? <FinEmpty text="Bu ay çıkış kaydı yok." /> : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ position: "relative", width: 168, height: 168, flexShrink: 0 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={donutData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={78} paddingAngle={2} stroke="none">
+                      {donutData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    </Pie>
+                    <Tooltip formatter={(v: any) => tl(Number(v))} contentStyle={{ borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                  <div style={{ fontSize: 10.5, color: C.textFaint }}>Toplam çıkış</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.ink }}>{tl(toplamGider)}</div>
+                </div>
+              </div>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 7, minWidth: 0 }}>
+                {donutData.map((d, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 3, background: d.color, flexShrink: 0 }} />
+                    <span style={{ color: C.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{d.name}</span>
+                    <span style={{ color: C.textMuted, fontWeight: 500 }}>{tl(d.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={card}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, marginBottom: 14 }}>Aylık karşılaştırma</div>
+          <div style={{ width: "100%", height: 168 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={barData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F0EC" />
+                <XAxis dataKey="name" tick={{ fontSize: 11.5, fill: C.textMuted }} axisLine={false} tickLine={false} />
+                <YAxis hide />
+                <Tooltip formatter={(v: any) => tl(Number(v))} cursor={{ fill: "rgba(0,0,0,0.03)" }} contentStyle={{ borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }} />
+                <Bar dataKey="v" radius={[5, 5, 0, 0]}>
+                  {barData.map((d, i) => <Cell key={i} fill={d.fill} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div style={card}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>Gelir kategorileri</div>
+            <div style={{ fontSize: 12, color: C.green, background: C.greenSoft, borderRadius: 7, padding: "3px 9px", fontWeight: 500 }}>{tl(totalIncome)}</div>
+          </div>
+          {incomeCats.length === 0 ? <FinEmpty text="Bu ay gelir kaydı yok." /> : incomeCats.map((c) => <FinRow key={c.id} name={c.name} amount={c.total} />)}
+        </div>
+        <div style={card}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>Gider kategorileri</div>
+            <div style={{ fontSize: 12, color: C.dangerInk, background: C.dangerBg, borderRadius: 7, padding: "3px 9px", fontWeight: 500 }}>{tl(totalExpense)}</div>
+          </div>
+          {expenseCats.length === 0 ? <FinEmpty text="Bu ay gider kaydı yok." /> : expenseCats.map((c) => <FinRow key={c.id} name={c.name} amount={c.total} />)}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 0", borderTop: "1px solid #F4F3EF", fontSize: 13 }}>
+            <span style={{ color: C.textMuted }}>Personel maliyeti (bordro)</span>
+            <span style={{ color: C.textMuted, fontWeight: 500 }}>{tl(payrollCost)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: C.warnBg, border: "1px solid #F3E6C9", borderRadius: 12, padding: "11px 14px", fontSize: 11.5, color: "#8A6D1F", display: "flex", gap: 8 }}>
+        <i className="ti ti-alert-triangle" style={{ fontSize: 15, marginTop: 1, flexShrink: 0 }} aria-hidden="true" />
+        <span><b>Devlet ve vergi tahminidir.</b> {taxLine} Kurumlar/gelir vergisi gerçekte <b>yıllık ve şirket bazında</b> tahakkuk eder; buradaki rakam bu şubenin bu ayki kârına göre projeksiyondur, gerçek beyan değildir. Net = Gelir − Giderler − Devlet/Vergi. Salt-okunur; kayıtlar "Gelir / Gider" sayfasından gelir.</span>
+      </div>
+    </div>
+  );
+}
+
+function FinFig({ icon, iconColor, label, sub, value }: { icon: string; iconColor: string; label: string; sub?: string; value: string }) {
+  return (
+    <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 12, padding: "13px 14px" }}>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 7, display: "flex", alignItems: "center", gap: 5 }}>
+        <i className={`ti ${icon}`} style={{ fontSize: 14, color: iconColor }} aria-hidden="true" />{label}
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 600, color: "#fff" }}>{value}</div>
+      {sub ? <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>{sub}</div> : null}
+    </div>
+  );
+}
+
+function FinRow({ name, amount }: { name: string; amount: number }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 0", borderTop: "1px solid #F4F3EF", fontSize: 13 }}>
+      <span style={{ color: "#111110" }}>{name}</span>
+      <span style={{ color: "#6B6862", fontWeight: 500 }}>{tl(amount)}</span>
+    </div>
+  );
+}
+
+function FinEmpty({ text }: { text: string }) {
+  return (
+    <div style={{ padding: "26px 10px", textAlign: "center", color: "#A6A29B", fontSize: 12.5 }}>
+      <i className="ti ti-inbox" style={{ fontSize: 24, display: "block", marginBottom: 6 }} aria-hidden="true" />
+      {text}
+    </div>
+  );
+}
+
+// ============================================================================
+// Manager Gelir / Gider — sube defteri. Gider/Gelir toggle + kategori paneli
+// (kataloglanma) + kayit listesi. CRUD, soft-delete, sifre korumali, audit.
+// branch_id = mudurun subesi. Owner otomatik gorur.
+// ============================================================================
+type LedCat = { id: string; name: string; kind: string };
+type LedEntry = { id: string; category_id: string; category_name?: string | null; kind: string; amount: number; entry_date: string; note?: string | null; is_deleted?: boolean };
+type LedAudit = { id: string; action: string; kind?: string | null; amount?: number | null; actor_name?: string | null; created_at: string };
+
+const AYLAR_LED = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+const tlLed = (n: number) => "₺" + Math.round(n ?? 0).toLocaleString("tr-TR");
+const tlLed2 = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const ledToday = () => new Date().toISOString().slice(0, 10);
+const ledDate = (iso: string) => { const [y, m, d] = (iso || "").split("-"); return d ? `${d} ${AYLAR_LED[+m - 1]?.slice(0, 3)}` : iso; };
+const ledDateTime = (iso: string) => { try { const d = new Date(iso); return `${d.getDate()} ${AYLAR_LED[d.getMonth()].slice(0, 3)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; } catch { return iso; } };
+
+function ManagerLedger({ token, branchId }: { token: string; branchId: string; branchName: string }) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1);
+  const [kind, setKind] = useState<"expense" | "income">("income");
+  const [tab, setTab] = useState<"records" | "history">("records");
+  const [incomeCats, setIncomeCats] = useState<LedCat[]>([]);
+  const [expenseCats, setExpenseCats] = useState<LedCat[]>([]);
+  const [entries, setEntries] = useState<LedEntry[]>([]);
+  const [activeCat, setActiveCat] = useState<string>("");
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [audit, setAudit] = useState<LedAudit[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [showCatMgr, setShowCatMgr] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [showEntry, setShowEntry] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState({ category_id: "", amount: "", entry_date: ledToday(), note: "" });
+  const [formErr, setFormErr] = useState("");
+  const [pw, setPw] = useState<null | { type: "delete" | "edit"; entry: LedEntry; payload?: any }>(null);
+  const [pwVal, setPwVal] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+
+  const isExp = kind === "expense";
+  const accent = isExp ? "#C68A12" : "#15803D";
+  const accentBg = isExp ? "#FEF6E7" : "#EEF8F2";
+  const accentBorder = isExp ? "#EAD9AE" : "#1FA85A";
+
+  const loadCats = async () => {
+    try {
+      const [inc, exp] = await Promise.all([
+        axios.get(`${API_URL}/finance/categories?kind=income&t=${Date.now()}`, { headers }),
+        axios.get(`${API_URL}/finance/categories?kind=expense&t=${Date.now()}`, { headers }),
+      ]);
+      setIncomeCats(inc.data || []); setExpenseCats(exp.data || []);
+    } catch { /* */ }
+  };
+  const loadEntries = async () => {
+    if (!branchId) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/finance/entries?year=${year}&month=${month}&branch_id=${branchId}&include_deleted=${showDeleted}&t=${Date.now()}`, { headers });
+      setEntries(Array.isArray(r.data) ? r.data : []);
+    } catch { setEntries([]); } finally { setLoading(false); }
+  };
+  const loadAudit = async () => {
+    try { const r = await axios.get(`${API_URL}/finance/audit?limit=100&t=${Date.now()}`, { headers }); setAudit(Array.isArray(r.data) ? r.data : []); }
+    catch { setAudit([]); }
+  };
+
+  useEffect(() => { loadCats(); /* eslint-disable-next-line */ }, [token]);
+  useEffect(() => { loadEntries(); /* eslint-disable-next-line */ }, [branchId, token, year, month, showDeleted]);
+  useEffect(() => { setActiveCat(""); }, [kind]);
+  useEffect(() => { if (tab === "history") loadAudit(); /* eslint-disable-next-line */ }, [tab]);
+
+  const isFuture = (y: number, m: number) => y > today.getFullYear() || (y === today.getFullYear() && m > today.getMonth() + 1);
+  const goPrev = () => { let m = month - 1, y = year; if (m < 1) { m = 12; y--; } setMonth(m); setYear(y); };
+  const goNext = () => { let m = month + 1, y = year; if (m > 12) { m = 1; y++; } if (!isFuture(y, m)) { setMonth(m); setYear(y); } };
+  const nextLocked = isFuture(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1);
+
+  const cats = isExp ? expenseCats : incomeCats;
+  const live = entries.filter((e) => !e.is_deleted);
+  const totalInc = live.filter((e) => e.kind === "income").reduce((a, e) => a + e.amount, 0);
+  const totalExp = live.filter((e) => e.kind === "expense").reduce((a, e) => a + e.amount, 0);
+  const net = totalInc - totalExp;
+
+  const kindEntries = entries.filter((e) => e.kind === kind);
+  const catTotals: Record<string, number> = {};
+  kindEntries.filter((e) => !e.is_deleted).forEach((e) => { catTotals[e.category_id] = (catTotals[e.category_id] || 0) + e.amount; });
+  const periodKind = kindEntries.filter((e) => !e.is_deleted).reduce((a, e) => a + e.amount, 0);
+  const shown = activeCat ? kindEntries.filter((e) => e.category_id === activeCat) : kindEntries;
+  const shownTotal = shown.filter((e) => !e.is_deleted).reduce((a, e) => a + e.amount, 0);
+
+  const addCat = async () => {
+    const name = newCatName.trim(); if (!name) return;
+    try { await axios.post(`${API_URL}/finance/categories`, { name, kind, scope: "branch" }, { headers }); setNewCatName(""); await loadCats(); } catch { /* */ }
+  };
+  const delCat = async (id: string) => {
+    try { await axios.delete(`${API_URL}/finance/categories/${id}`, { headers }); await loadCats(); if (activeCat === id) setActiveCat(""); } catch { /* */ }
+  };
+
+  const openNew = () => { setFormErr(""); setEditId(null); setForm({ category_id: cats[0]?.id || "", amount: "", entry_date: ledToday(), note: "" }); setShowEntry(true); };
+  const openEdit = (e: LedEntry) => { setFormErr(""); setEditId(e.id); setForm({ category_id: e.category_id, amount: String(e.amount), entry_date: e.entry_date, note: e.note || "" }); setShowEntry(true); };
+
+  const submitEntry = async () => {
+    setFormErr("");
+    if (!form.category_id) { setFormErr("Kategori seçin."); return; }
+    const amt = parseFloat(form.amount);
+    if (!amt || amt <= 0) { setFormErr("Geçerli bir tutar girin."); return; }
+    const payload = { category_id: form.category_id, amount: amt, entry_date: form.entry_date || ledToday(), branch_id: branchId, note: form.note.trim() || null };
+    if (editId) {
+      const ent = entries.find((x) => x.id === editId);
+      if (ent) { setShowEntry(false); setPwVal(""); setPwErr(""); setPw({ type: "edit", entry: ent, payload }); }
+      return;
+    }
+    try { await axios.post(`${API_URL}/finance/entries`, payload, { headers }); setShowEntry(false); await loadEntries(); }
+    catch (e: any) { setFormErr(e?.response?.data?.detail || "Kayıt eklenemedi."); }
+  };
+
+  const confirmPw = async () => {
+    if (!pw || pwBusy) return;
+    if (!pwVal) { setPwErr("Şifre girin."); return; }
+    setPwBusy(true); setPwErr("");
+    try {
+      if (pw.type === "delete") await axios.delete(`${API_URL}/finance/entries/${pw.entry.id}`, { headers, data: { admin_password: pwVal } });
+      else await axios.put(`${API_URL}/finance/entries/${pw.entry.id}`, { admin_password: pwVal, ...pw.payload }, { headers });
+      setPw(null); setPwVal(""); await loadEntries(); if (tab === "history") await loadAudit();
+    } catch (e: any) { setPwErr(e?.response?.data?.detail || "İşlem başarısız. Şifreyi kontrol et."); }
+    finally { setPwBusy(false); }
+  };
+
+  const auditMeta = (a: string) => a === "deleted" ? { label: "Silindi", color: C.dangerInk, bg: C.dangerBg } : a === "updated" ? { label: "Düzenlendi", color: C.warnInk, bg: C.warnBg } : { label: "Eklendi", color: C.greenDark, bg: C.greenSoft };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Band */}
+      <div style={{ background: "#0A0A0A", borderRadius: 16, padding: "18px 22px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+            <div style={{ width: 42, height: 42, borderRadius: 11, background: "rgba(34,197,94,0.13)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className="ti ti-arrows-exchange" style={{ fontSize: 22, color: "#2EE06A" }} aria-hidden="true" />
+            </div>
+            <div>
+              <div style={{ fontSize: 19, fontWeight: 700, color: "#fff", lineHeight: 1.1 }}>Gelir / Gider</div>
+              <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 2 }}>{AYLAR_LED[month - 1]} {year} · şube defteri</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: "5px 6px" }}>
+            <button onClick={goPrev} style={{ background: "transparent", border: "none", cursor: "pointer", padding: "3px 5px", display: "flex" }} aria-label="Önceki ay"><i className="ti ti-chevron-left" style={{ fontSize: 16, color: "rgba(255,255,255,0.7)" }} /></button>
+            <span style={{ fontSize: 12.5, color: "#fff", fontWeight: 500, minWidth: 104, textAlign: "center" }}>{AYLAR_LED[month - 1]} {year}</span>
+            <button onClick={goNext} disabled={nextLocked} style={{ background: "transparent", border: "none", cursor: nextLocked ? "default" : "pointer", padding: "3px 5px", display: "flex", opacity: nextLocked ? 0.3 : 1 }} aria-label="Sonraki ay"><i className="ti ti-chevron-right" style={{ fontSize: 16, color: "#fff" }} /></button>
+          </div>
+        </div>
+      </div>
+
+      {/* Özet */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 13, padding: "15px 16px" }}>
+          <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}><i className="ti ti-arrow-down-left" style={{ fontSize: 14, color: "#1FA85A" }} />Toplam gelir</div>
+          <div style={{ fontSize: 21, fontWeight: 700, color: "#1FA85A" }}>{tlLed(totalInc)}</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 13, padding: "15px 16px" }}>
+          <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}><i className="ti ti-arrow-up-right" style={{ fontSize: 14, color: "#C0564B" }} />Toplam gider</div>
+          <div style={{ fontSize: 21, fontWeight: 700, color: "#C0564B" }}>{tlLed(totalExp)}</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 13, padding: "15px 16px" }}>
+          <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}><i className="ti ti-equal" style={{ fontSize: 14, color: C.ink }} />Net (gelir − gider)</div>
+          <div style={{ fontSize: 21, fontWeight: 700, color: net >= 0 ? C.ink : "#C0564B" }}>{tlLed(net)}</div>
+        </div>
+      </div>
+
+      {/* Toggle + tabs */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "inline-flex", background: C.neutralBg, borderRadius: 10, padding: 3 }}>
+          <div onClick={() => setKind("income")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: !isExp ? 600 : 500, color: !isExp ? "#fff" : C.textFaint, background: !isExp ? "#1FA85A" : "transparent", borderRadius: 8, cursor: "pointer" }}>Gelir</div>
+          <div onClick={() => setKind("expense")} style={{ padding: "7px 18px", fontSize: 12.5, fontWeight: isExp ? 600 : 500, color: isExp ? "#fff" : C.textFaint, background: isExp ? "#C68A12" : "transparent", borderRadius: 8, cursor: "pointer" }}>Gider</div>
+        </div>
+        <div style={{ display: "inline-flex", gap: 2, background: "#F7F6F2", borderRadius: 9, padding: 3 }}>
+          <div onClick={() => setTab("records")} style={{ padding: "6px 13px", fontSize: 12, fontWeight: tab === "records" ? 600 : 500, color: tab === "records" ? C.ink : C.textFaint, background: tab === "records" ? "#fff" : "transparent", borderRadius: 7, cursor: "pointer", boxShadow: tab === "records" ? "0 1px 2px rgba(0,0,0,0.05)" : "none" }}>Kayıtlar</div>
+          <div onClick={() => setTab("history")} style={{ padding: "6px 13px", fontSize: 12, fontWeight: tab === "history" ? 600 : 500, color: tab === "history" ? C.ink : C.textFaint, background: tab === "history" ? "#fff" : "transparent", borderRadius: 7, cursor: "pointer", boxShadow: tab === "history" ? "0 1px 2px rgba(0,0,0,0.05)" : "none", display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-history" style={{ fontSize: 13 }} />Geçmiş</div>
+        </div>
+      </div>
+
+      {tab === "records" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.7fr", gap: 16, alignItems: "start" }}>
+          {/* SOL: kategoriler */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <span style={{ fontSize: 11, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>{isExp ? "Gider" : "Gelir"} kategorileri</span>
+              <button onClick={() => setShowCatMgr(true)} style={{ fontSize: 10.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "4px 9px", borderRadius: 7, cursor: "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}><i className="ti ti-settings" style={{ fontSize: 12 }} />Yönet</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              <div onClick={() => setActiveCat("")} style={{ background: activeCat === "" ? "#fff" : C.surface, border: activeCat === "" ? `1.5px solid ${accentBorder}` : `1px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: C.ink }}>Tümü</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{tlLed(periodKind)}</span>
+              </div>
+              {cats.length === 0 ? <div style={{ fontSize: 11.5, color: C.textHint, padding: "14px 0", textAlign: "center" }}>Henüz kategori yok.</div>
+                : cats.map((c) => (
+                  <div key={c.id} onClick={() => setActiveCat(c.id)} style={{ background: activeCat === c.id ? "#fff" : C.surface, border: activeCat === c.id ? `1.5px solid ${accentBorder}` : `1px solid ${C.border}`, borderRadius: 11, padding: "11px 13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12.5, fontWeight: activeCat === c.id ? 600 : 400, color: C.ink }}>{c.name}</span>
+                    <span style={{ fontSize: 12, color: catTotals[c.id] ? C.textMuted : C.textHint }}>{tlLed(catTotals[c.id] || 0)}</span>
+                  </div>
+                ))}
+              <div onClick={() => setShowCatMgr(true)} style={{ background: C.surface, border: "1px dashed #E0DACE", borderRadius: 11, padding: "10px 13px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: C.greenDark }}>
+                <i className="ti ti-plus" style={{ fontSize: 13 }} /><span style={{ fontSize: 11.5, fontWeight: 500 }}>Kategori ekle</span>
+              </div>
+            </div>
+          </div>
+
+          {/* SAĞ: kayıtlar */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>Kayıtlar — {AYLAR_LED[month - 1]} {year}</span>
+              <button onClick={openNew} disabled={cats.length === 0} style={{ fontSize: 12, fontWeight: 600, color: "#fff", background: cats.length === 0 ? "#8A867F" : C.ink, border: "none", padding: "8px 14px", borderRadius: 9, cursor: cats.length === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-plus" style={{ fontSize: 14, color: "#2EE06A" }} />Kayıt ekle</button>
+            </div>
+
+            <div style={{ background: accentBg, border: `1px solid ${accentBorder}`, borderRadius: 11, padding: "12px 15px", marginBottom: 13, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 12, color: accent, fontWeight: 500 }}>Dönem toplam {isExp ? "gider" : "gelir"}{activeCat ? " (filtreli)" : ""}</span>
+              <span style={{ fontSize: 17, fontWeight: 700, color: accent }}>{tlLed2(shownTotal)}</span>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.textFaint, cursor: "pointer" }}>
+                <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} /> Silinenleri göster
+              </label>
+            </div>
+
+            {loading ? <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+              : shown.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "34px 0", color: C.textHint }}>
+                  <i className="ti ti-notebook" style={{ fontSize: 24 }} />
+                  <span style={{ fontSize: 12.5 }}>Bu dönemde {isExp ? "gider" : "gelir"} kaydı yok.</span>
+                  {cats.length > 0 && <button onClick={openNew} style={{ fontSize: 11.5, color: C.greenDark, background: C.greenSoft, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 600, marginTop: 2 }}>İlk kaydı ekle</button>}
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.6fr 0.8fr 1fr 60px", gap: 10, padding: "0 14px 7px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    <span>kategori</span><span>tarih</span><span style={{ textAlign: "right" }}>tutar</span><span style={{ textAlign: "center" }}>işlem</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                    {shown.map((e) => (
+                      <div key={e.id} style={{ background: e.is_deleted ? "#FBFAF8" : "#fff", border: `1px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", display: "grid", gridTemplateColumns: "1.6fr 0.8fr 1fr 60px", gap: 10, alignItems: "center", opacity: e.is_deleted ? 0.55 : 1 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 500, color: C.ink, textDecoration: e.is_deleted ? "line-through" : "none" }}>
+                            {e.category_name || cats.find((c) => c.id === e.category_id)?.name || "—"}
+                            {e.is_deleted && <span style={{ fontSize: 9, color: C.dangerInk, background: C.dangerBg, padding: "1px 6px", borderRadius: 6, marginLeft: 6, fontWeight: 600, textDecoration: "none" }}>silindi</span>}
+                          </div>
+                          {e.note && <div style={{ fontSize: 10.5, color: C.textHint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.note}</div>}
+                        </div>
+                        <span style={{ fontSize: 11.5, color: C.textMuted }}>{ledDate(e.entry_date)}</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, textAlign: "right", color: accent }}>{tlLed(e.amount)}</span>
+                        <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
+                          {!e.is_deleted ? (
+                            <>
+                              <button onClick={() => openEdit(e)} title="Düzenle" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#C9C6BF", padding: 2 }}><i className="ti ti-pencil" style={{ fontSize: 15 }} /></button>
+                              <button onClick={() => { setPwVal(""); setPwErr(""); setPw({ type: "delete", entry: e }); }} title="Sil" style={{ background: "transparent", border: "none", cursor: "pointer", color: "#D8AFA9", padding: 2 }}><i className="ti ti-trash" style={{ fontSize: 15 }} /></button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+          </div>
+        </div>
+      ) : (
+        <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 }}>
+          {audit.length === 0 ? (
+            <div style={{ padding: "30px 10px", textAlign: "center", color: C.textHint, fontSize: 12.5 }}><i className="ti ti-history" style={{ fontSize: 24, display: "block", marginBottom: 6 }} />Henüz işlem geçmişi yok.</div>
+          ) : audit.map((a) => {
+            const m = auditMeta(a.action);
+            return (
+              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", borderTop: `1px solid #F4F3EF`, fontSize: 12.5 }}>
+                <span style={{ fontSize: 10.5, fontWeight: 600, color: m.color, background: m.bg, borderRadius: 5, padding: "2px 8px", flexShrink: 0, minWidth: 72, textAlign: "center" }}>{m.label}</span>
+                <div style={{ flex: 1, color: C.ink }}>{a.amount != null ? tlLed(a.amount) : "—"} {a.kind === "income" ? "gelir" : a.kind === "expense" ? "gider" : ""}</div>
+                <div style={{ color: C.textFaint, flexShrink: 0 }}>{a.actor_name || "—"} · {ledDateTime(a.created_at)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Kategori yönet modalı */}
+      {showCatMgr ? (
+        <Modal title={`${isExp ? "Gider" : "Gelir"} kategorileri`} onClose={() => setShowCatMgr(false)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 320 }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={newCatName} onChange={(e) => setNewCatName(e.target.value)} placeholder="Yeni kategori adı" onKeyDown={(e) => { if (e.key === "Enter") addCat(); }} style={{ flex: 1, padding: "9px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13 }} />
+              <button onClick={addCat} style={{ background: C.green, color: "#fff", border: "none", borderRadius: 8, padding: "0 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Ekle</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 240, overflowY: "auto" }}>
+              {cats.length === 0 ? <div style={{ fontSize: 12, color: C.textHint, textAlign: "center", padding: 14 }}>Henüz kategori yok.</div>
+                : cats.map((c) => (
+                  <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 11px", border: `1px solid ${C.border}`, borderRadius: 9 }}>
+                    <span style={{ fontSize: 13, color: C.ink }}>{c.name}</span>
+                    <button onClick={() => delCat(c.id)} title="Sil" style={{ background: "transparent", border: "none", cursor: "pointer", color: C.dangerInk }}><i className="ti ti-trash" style={{ fontSize: 15 }} /></button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {/* Kayıt ekle/düzenle modalı */}
+      {showEntry ? (
+        <Modal title={editId ? "Kaydı düzenle" : `${isExp ? "Gider" : "Gelir"} ekle`} onClose={() => setShowEntry(false)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 320 }}>
+            <div>
+              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 5 }}>Kategori</div>
+              <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })} style={{ width: "100%", padding: "9px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, background: "#fff" }}>
+                <option value="">Seç…</option>
+                {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 5 }}>Tutar (₺)</div>
+                <input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0" style={{ width: "100%", padding: "9px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13 }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 5 }}>Tarih</div>
+                <input type="date" value={form.entry_date} onChange={(e) => setForm({ ...form, entry_date: e.target.value })} style={{ width: "100%", padding: "9px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13 }} />
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 5 }}>Not (opsiyonel)</div>
+              <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Açıklama" style={{ width: "100%", padding: "9px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13 }} />
+            </div>
+            {formErr ? <div style={{ fontSize: 12, color: C.dangerInk }}>{formErr}</div> : null}
+            {editId ? <div style={{ fontSize: 11.5, color: C.warnInk, background: C.warnBg, borderRadius: 7, padding: "7px 10px" }}>Düzenleme için sonraki adımda şifren istenecek.</div> : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button onClick={() => setShowEntry(false)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 14px", fontSize: 13, cursor: "pointer", color: C.textMuted }}>Vazgeç</button>
+              <button onClick={submitEntry} style={{ background: C.green, color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>{editId ? "Devam" : "Kaydet"}</button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {/* Şifre modalı */}
+      {pw ? (
+        <Modal title={pw.type === "delete" ? "Kaydı sil" : "Değişikliği onayla"} onClose={() => setPw(null)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 300 }}>
+            <div style={{ fontSize: 13, color: C.textMuted }}>{pw.type === "delete" ? "Bu kayıt silinecek (geri alınabilir, denetim kaydı tutulur). Şifreni gir." : "Değişikliği uygulamak için şifreni gir."}</div>
+            <input type="password" value={pwVal} onChange={(e) => setPwVal(e.target.value)} placeholder="Şifren" autoFocus onKeyDown={(e) => { if (e.key === "Enter") confirmPw(); }} style={{ width: "100%", padding: "9px 10px", border: `1px solid ${pwErr ? C.dangerBorder : C.border}`, borderRadius: 8, fontSize: 13 }} />
+            {pwErr ? <div style={{ fontSize: 12, color: C.dangerInk }}>{pwErr}</div> : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setPw(null)} style={{ background: "transparent", border: `1px solid ${C.border}`, borderRadius: 8, padding: "9px 14px", fontSize: 13, cursor: "pointer", color: C.textMuted }}>Vazgeç</button>
+              <button onClick={confirmPw} disabled={pwBusy || !pwVal} style={{ background: pw.type === "delete" ? C.dangerInk : C.green, color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: pwBusy || !pwVal ? 0.6 : 1 }}>{pw.type === "delete" ? "Sil" : "Onayla"}</button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+    </div>
+  );
+}
+
 
 function Modal({ title, children, onClose }: { title: string; children: any; onClose: () => void }) {
   return (

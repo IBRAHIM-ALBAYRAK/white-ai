@@ -85,7 +85,6 @@ export default function BrandPanel({
   const [page, setPage] = useState("overview");
   const [financeTab, setFinanceTab] = useState<"overview" | "branches" | "franchise">("overview");
   const [payrollTab, setPayrollTab] = useState<"merkez" | "branches" | "franchise">("merkez");
-  const [staffTab, setStaffTab] = useState<"merkez" | "branches" | "franchise">("merkez");
   const [jumpBranch, setJumpBranch] = useState<string | null>(null);
   const goToBranch = (branchId: string, target: string) => { setJumpBranch(branchId); setPage(target); };
   const brandName = companyName || "Markam";
@@ -159,13 +158,6 @@ export default function BrandPanel({
                 ))}
               </div>
             )}
-            {page === "staff" && (
-              <div style={{ display: "inline-flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: 3 }}>
-                {(["merkez", "branches", "franchise"] as const).map((t) => (
-                  <div key={t} onClick={() => setStaffTab(t)} style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: staffTab === t ? 600 : 500, color: staffTab === t ? "#fff" : C.textFaint, background: staffTab === t ? C.ink : "transparent", borderRadius: 8, cursor: "pointer" }}>{t === "merkez" ? "Marka" : t === "branches" ? "Şubeler" : "Franchise"}</div>
-                ))}
-              </div>
-            )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.green, background: C.greenSoft, padding: "4px 10px", borderRadius: 20 }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green }} />Canlı
             </div>
@@ -176,7 +168,7 @@ export default function BrandPanel({
           {page === "overview" && <OverviewPage firstName={user.first_name} token={token} />}
           {page === "company" && <CompanyPage token={token} companyId={user.company_id || ""} brandName={brandName} />}
           {page === "franchises" && <BranchesPage token={token} companyId={user.company_id || ""} goToBranch={goToBranch} />}
-          {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} tab={staffTab} setTab={setStaffTab} />}
+          {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "inventory" && <InventoryPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "payroll" && <PayrollPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} tab={payrollTab} setTab={setPayrollTab} />}
           {page === "ledger" && <LedgerPage token={token} companyId={user.company_id || ""} />}
@@ -2034,32 +2026,20 @@ const SHIFT_META: Record<string, { label: string; dot: string; fg: string; bg: s
   leave:       { label: "İzinli",           dot: "#E0A82E", fg: "#9C8A4E", bg: "#FBF6E9" },
 };
 
-function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void; tab: "merkez" | "branches" | "franchise"; setTab: (t: "merkez" | "branches" | "franchise") => void }) {
+function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void }) {
   const headers = { Authorization: `Bearer ${token}` };
-
-  // Merkez
-  const [merkezEmps, setMerkezEmps] = useState<Employee[]>([]);
-  const [merkezLoading, setMerkezLoading] = useState(false);
-
-  // Subeler (markaya ait)
   const [branches, setBranches] = useState<StaffBranch[]>([]);
-  const [branchCounts, setBranchCounts] = useState<Record<string, number>>({});
-  const [branchesLoaded, setBranchesLoaded] = useState(false);
-  const [selBranch, setSelBranch] = useState<StaffBranch | null>(null);
-  const [branchEmps, setBranchEmps] = useState<Employee[]>([]);
-  const [branchEmpLoading, setBranchEmpLoading] = useState(false);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<StaffBranch | null>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [empLoading, setEmpLoading] = useState(false);
 
-  // Franchise
-  const [franchises, setFranchises] = useState<{ id: string; name: string }[]>([]);
-  const [franCounts, setFranCounts] = useState<Record<string, number>>({});
-  const [selFran, setSelFran] = useState<{ id: string; name: string } | null>(null);
-  const [franRoster, setFranRoster] = useState<any[]>([]);
-  const [franRosterLoading, setFranRosterLoading] = useState(false);
-
-  // Modallar (yalnizca Marka)
+  // ekleme modal
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "" });
   const [formErr, setFormErr] = useState("");
+  // detay modal
   const [detail, setDetail] = useState<Employee | null>(null);
   const [edit, setEdit] = useState({ first_name: "", last_name: "", phone: "", position: "", department: "", base_salary: "", bank_iban: "" });
   const [editing, setEditing] = useState(false);
@@ -2067,76 +2047,68 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
   const [termPw, setTermPw] = useState("");
   const [msg, setMsg] = useState("");
 
-  const canManage = tab === "merkez";
-
-  // ── Merkez ──
-  const loadMerkez = async () => {
-    setMerkezLoading(true);
-    try { const r = await axios.get(`${API_URL}/employees/merkez?t=${Date.now()}`, { headers }); setMerkezEmps(r.data); }
-    catch { setMerkezEmps([]); }
-    setMerkezLoading(false);
+  // helper: bir company'nin ilk branch'ini bul
+  const firstBranchOf = async (cid: string): Promise<{ id: string; name: string; address?: string } | null> => {
+    try {
+      const r = await axios.get(`${API_URL}/companies/${cid}/branches`, { headers });
+      return r.data.length ? r.data[0] : null;
+    } catch { return null; }
   };
-  useEffect(() => { if (tab === "merkez") loadMerkez(); /* eslint-disable-next-line */ }, [tab]);
 
-  // ── Subeler ──
   const loadBranches = async () => {
     const list: StaffBranch[] = [];
-    try { const r = await axios.get(`${API_URL}/companies/${companyId}/branches?t=${Date.now()}`, { headers }); r.data.forEach((b: any) => list.push({ id: b.id, name: b.name, address: b.address, kind: "brand" })); }
-    catch {}
+    // 1) kendi subeler
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/branches`, { headers });
+      r.data.forEach((b: any) => list.push({ id: b.id, name: b.name, address: b.address, kind: "brand" }));
+    } catch {}
+    // 2) franchise'lar (her biri ayri company → ilk branch'ini al)
+    try {
+      const r = await axios.get(`${API_URL}/oversight/subs`, { headers });
+      const fr = r.data.filter((s: any) => s.link_type === "franchise");
+      await Promise.all(fr.map(async (f: any) => {
+        const b = await firstBranchOf(f.id);
+        if (b) list.push({ id: b.id, name: f.name, address: b.address || f.address, kind: "franchise" });
+      }));
+    } catch {}
     setBranches(list);
+    // personel sayilari
     const c: Record<string, number> = {};
-    await Promise.all(list.map(async (b) => { try { const r = await axios.get(`${API_URL}/employees/branch/${b.id}?t=${Date.now()}`, { headers }); c[b.id] = r.data.length; } catch { c[b.id] = 0; } }));
-    setBranchCounts(c);
-    setBranchesLoaded(true);
+    await Promise.all(list.map(async (b) => {
+      try { const r = await axios.get(`${API_URL}/employees/branch/${b.id}`, { headers }); c[b.id] = r.data.length; }
+      catch { c[b.id] = 0; }
+    }));
+    setCounts(c);
+    setLoading(false);
   };
+
+  const loadEmployees = async (branchId: string) => {
+    setEmpLoading(true);
+    try { const r = await axios.get(`${API_URL}/employees/branch/${branchId}`, { headers }); setEmployees(r.data); }
+    catch { setEmployees([]); }
+    setEmpLoading(false);
+  };
+
   useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
 
-  const loadBranchEmps = async (branchId: string) => {
-    setBranchEmpLoading(true);
-    try { const r = await axios.get(`${API_URL}/employees/branch/${branchId}?t=${Date.now()}`, { headers }); setBranchEmps(r.data); }
-    catch { setBranchEmps([]); }
-    setBranchEmpLoading(false);
-  };
-  const selectBranch = (b: StaffBranch) => { setSelBranch(b); loadBranchEmps(b.id); };
-
+  const selectBranch = (b: StaffBranch) => { setSelected(b); loadEmployees(b.id); };
   useEffect(() => {
-    if (jumpBranch && branchesLoaded && branches.length) {
-      setTab("branches");
+    if (jumpBranch && branches.length) {
       const t = branches.find((b) => b.id === jumpBranch);
-      if (t) selectBranch(t);
+      if (t) { setSelected(t); loadEmployees(t.id); }
       if (clearJump) clearJump();
     }
     /* eslint-disable-next-line */
-  }, [jumpBranch, branchesLoaded, branches.length]);
+  }, [jumpBranch, branches.length]);
 
-  // ── Franchise ──
-  const loadFranchises = async () => {
-    const list: { id: string; name: string }[] = [];
-    try {
-      const r = await axios.get(`${API_URL}/oversight/subs?t=${Date.now()}`, { headers });
-      r.data.filter((s: any) => s.link_type === "franchise").forEach((f: any) => list.push({ id: f.id, name: f.name }));
-    } catch {}
-    setFranchises(list);
-    const c: Record<string, number> = {};
-    await Promise.all(list.map(async (f) => { try { const r = await axios.get(`${API_URL}/employees/franchise-roster/${f.id}?t=${Date.now()}`, { headers }); c[f.id] = r.data.length; } catch { c[f.id] = 0; } }));
-    setFranCounts(c);
-  };
-  useEffect(() => { if (tab === "franchise") loadFranchises(); /* eslint-disable-next-line */ }, [tab]);
+  const totalStaff = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  const loadFranRoster = async (subCompanyId: string) => {
-    setFranRosterLoading(true);
-    try { const r = await axios.get(`${API_URL}/employees/franchise-roster/${subCompanyId}?t=${Date.now()}`, { headers }); setFranRoster(r.data); }
-    catch { setFranRoster([]); }
-    setFranRosterLoading(false);
-  };
-  const selectFran = (f: { id: string; name: string }) => { setSelFran(f); loadFranRoster(f.id); };
-
-  // ── CRUD (merkez) ──
   const addEmployee = async () => {
     setFormErr("");
     if (!form.first_name || !form.last_name) { setFormErr("Ad ve soyad zorunlu."); return; }
+    if (!selected) return;
     try {
-      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId }; // branch_id YOK = merkez
+      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId, branch_id: selected.id };
       if (form.email) payload.email = form.email;
       if (form.phone) payload.phone = form.phone;
       if (form.position) payload.position = form.position;
@@ -2146,7 +2118,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
       await axios.post(`${API_URL}/employees`, payload, { headers });
       setShowForm(false);
       setForm({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "" });
-      loadMerkez();
+      loadEmployees(selected.id); loadBranches();
     } catch (e: any) {
       const d = e.response?.data?.detail;
       setFormErr(typeof d === "string" ? d : (Array.isArray(d) ? d.map((x: any) => x.msg).join(", ") : "Personel eklenemedi."));
@@ -2155,207 +2127,165 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
 
   const openDetail = (em: Employee) => {
     setDetail(em);
-    setEdit({ first_name: em.first_name || "", last_name: em.last_name || "", phone: em.phone || "", position: em.position || "", department: em.department || "", base_salary: em.base_salary != null ? String(em.base_salary) : "", bank_iban: em.bank_iban || "" });
+    setEdit({ first_name: em.first_name || "", last_name: em.last_name || "", phone: em.phone || "", position: em.position || "", department: em.department || "" });
     setEditing(false); setRemoveMode(false); setMsg("");
   };
   const saveEdit = async () => {
     setMsg("");
     try {
-      const epayload: any = { first_name: edit.first_name, last_name: edit.last_name, phone: edit.phone, position: edit.position, department: edit.department, bank_iban: (edit.bank_iban || "").trim() };
+      const epayload: any = { first_name: edit.first_name, last_name: edit.last_name, phone: edit.phone, position: edit.position, department: edit.department, bank_iban: edit.bank_iban.trim() };
       epayload.base_salary = edit.base_salary ? (parseFloat(edit.base_salary) || 0) : null;
-      await axios.put(`${API_URL}/employees/${detail!.id}`, epayload, { headers }); setEditing(false); loadMerkez(); setDetail({ ...detail!, ...epayload });
-    } catch (e: any) { setMsg(e.response?.data?.detail || "Güncellenemedi."); }
+      await axios.put(`${API_URL}/employees/${detail!.id}`, epayload, { headers }); setEditing(false); if (selected) loadEmployees(selected.id); setDetail({ ...detail!, ...epayload });
+    }
+    catch (e: any) { setMsg(e.response?.data?.detail || "Güncellenemedi."); }
   };
   const terminate = async () => {
     setMsg("");
     if (!termPw) { setMsg("Onaylamak için şifren zorunlu."); return; }
     try {
       await axios.delete(`${API_URL}/employees/${detail!.id}/terminate`, { headers, data: { admin_password: termPw } });
-      setDetail(null); setTermPw(""); loadMerkez();
+      setDetail(null); setTermPw(""); if (selected) loadEmployees(selected.id); loadBranches();
     } catch (e: any) {
       const d = e.response?.data?.detail;
       setMsg(typeof d === "string" ? d : (Array.isArray(d) ? d.map((x: any) => x.msg).join(", ") : "İşten çıkarılamadı."));
     }
   };
 
+  const isFranchise = selected?.kind === "franchise";
   const greenBtn = { fontSize: 12, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 } as const;
   const softBtn = { fontSize: 12, fontWeight: 500, color: C.greenDark, background: C.greenSoft, border: "none", padding: "8px 12px", borderRadius: 8, cursor: "pointer" } as const;
   const inputStyle = { width: "100%", padding: "9px 11px", border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" as const };
   const labelStyle = { fontSize: 11, fontWeight: 600, color: C.textFaint, display: "block", marginBottom: 5 };
 
-  // ── employee satiri (Marka & Subeler ortak; clickable) ──
-  const empRow = (em: Employee) => {
-    const sm = SHIFT_META[em.shift_status || "not_started"] || SHIFT_META.not_started;
-    const initials = (em.first_name?.[0] || "") + (em.last_name?.[0] || "");
-    return (
-      <div key={em.id} onClick={() => openDetail(em)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "#fff", flexShrink: 0 }}>{initials}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{em.first_name} {em.last_name}</div>
-          <div style={{ fontSize: 11, color: C.textFaint }}>{[em.position, em.department].filter(Boolean).join(" · ") || "—"}</div>
-        </div>
-        {em.base_salary != null && <span style={{ fontSize: 11.5, color: C.textMuted, flexShrink: 0 }}>₺{Number(em.base_salary).toLocaleString("tr-TR")}</span>}
-        <span style={{ fontSize: 10, color: sm.fg, background: sm.bg, padding: "3px 9px", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: sm.dot }} />{sm.label}</span>
-      </div>
-    );
-  };
+  const branchActive = employees.filter((e) => e.is_active).length;
 
   return (
     <>
-      {/* ===== MARKA ===== */}
-      {tab === "merkez" && (
-        <>
-          <div style={{ background: "#0A0A0A", borderRadius: 16, padding: "18px 20px", boxShadow: "0 4px 18px rgba(0,0,0,0.13)", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>Merkez personeli</div>
-              <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 5 }}>Genel merkez kadrosu — şubeye bağlı olmayan, doğrudan markaya bağlı çalışanlar.</div>
-            </div>
-            <button style={{ fontSize: 13, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "9px 16px", borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap" }} onClick={() => { setShowForm(true); setFormErr(""); }}><i className="ti ti-plus" style={{ fontSize: 16 }} aria-hidden="true" />Personel Ekle</button>
-          </div>
-          {merkezLoading ? (
-            <div style={{ fontSize: 12.5, color: C.textHint, padding: "30px 0", textAlign: "center" }}>Yükleniyor…</div>
-          ) : merkezEmps.length === 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "50px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
-              <i className="ti ti-user-plus" style={{ fontSize: 24 }} aria-hidden="true" /><span style={{ fontSize: 12.5, textAlign: "center", maxWidth: 340 }}>Henüz merkez personeli yok. "Personel Ekle" ile şubeye bağlı olmayan çalışan ekleyebilirsin.</span>
+      <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 3 }}>Personel</div>
+      <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20 }}>Tüm şubelerinin personeli. Bir şube seç, detayına in.</div>
+
+      {/* Ozet kartlar */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 5 }}>Toplam Personel</div>
+          <div style={{ fontSize: 21, fontWeight: 600 }}>{loading ? "—" : totalStaff}</div>
+        </div>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 5 }}>Şube Sayısı</div>
+          <div style={{ fontSize: 21, fontWeight: 600, color: C.greenDark }}>{loading ? "—" : branches.length}</div>
+        </div>
+        <div style={{ background: C.ink, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: "#9DE8BE", marginBottom: 5 }}>Bugün mesaide</div>
+          <div style={{ fontSize: 21, fontWeight: 600, color: "#fff" }}>—</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 18 }}>
+        {/* SOL — sube filtresi */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Şubeler</div>
+          {loading ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+          ) : branches.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+              <i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Henüz şube yok.</span>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{merkezEmps.map((em) => empRow(em))}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {branches.map((b) => {
+                const isSel = selected?.id === b.id;
+                const cnt = counts[b.id] ?? 0;
+                const fr = b.kind === "franchise";
+                return (
+                  <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <span style={{ fontSize: 13, fontWeight: isSel ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.name}</span>
+                      <span style={{ fontSize: 9, color: fr ? C.franchise : C.greenDark, background: fr ? C.franchiseSoft : C.greenSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{fr ? "Franchise" : "Markaya Ait"}</span>
+                    </div>
+                    <span style={{ fontSize: 12, color: isSel ? C.greenDark : C.textFaint, fontWeight: isSel ? 600 : 400, flexShrink: 0, marginLeft: 6 }}>{cnt}</span>
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </>
-      )}
+        </div>
 
-      {/* ===== SUBELER ===== */}
-      {tab === "branches" && (
-        <>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-            <div><div style={{ fontSize: 20, fontWeight: 700, color: C.ink }}>Şube personeli</div><div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 3 }}>Şube personelini şube yöneticisi yönetir. Marka panelinde izlenir.</div></div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.neutralBg, border: `0.5px solid ${C.border}`, color: C.textFaint, borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 500 }}><i className="ti ti-lock" style={{ fontSize: 15 }} aria-hidden="true" />Salt-okunur</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 18 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Şubeler</div>
-              {!branchesLoaded ? (
+        {/* SAG — secili sube personeli */}
+        <div>
+          {!selected ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
+              <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Personeli görmek için bir şube seçin.</span>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.name} — Personel ({employees.length})</span>
+                {!isFranchise ? (
+                  <button style={greenBtn} onClick={() => { setShowForm(true); setFormErr(""); }}><i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />Personel Ekle</button>
+                ) : (
+                  <span style={{ fontSize: 10.5, color: C.franchise, background: C.franchiseSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-eye" style={{ fontSize: 13 }} aria-hidden="true" />Gözetim (salt okunur)</span>
+                )}
+              </div>
+
+              {/* durum lejant */}
+              <div style={{ display: "flex", gap: 14, marginBottom: 12, flexWrap: "wrap" }}>
+                {Object.values(SHIFT_META).map((m) => (
+                  <span key={m.label} style={{ fontSize: 10.5, color: C.textMuted, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.dot }} />{m.label}
+                  </span>
+                ))}
+              </div>
+
+              {empLoading ? (
                 <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-              ) : branches.length === 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Henüz şube yok.</span></div>
+              ) : employees.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+                  <i className="ti ti-user-off" style={{ fontSize: 22 }} aria-hidden="true" />
+                  <span style={{ fontSize: 12.5 }}>Bu şubede henüz personel yok.</span>
+                </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {branches.map((b) => {
-                    const isSel = selBranch?.id === b.id;
-                    const cnt = branchCounts[b.id] ?? 0;
+                  {employees.map((em) => {
+                    const sm = SHIFT_META[em.shift_status || "not_started"] || SHIFT_META.not_started;
+                    const initials = (em.first_name?.[0] || "") + (em.last_name?.[0] || "");
                     return (
-                      <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: isSel ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.name}</span>
-                          <span style={{ fontSize: 9, color: C.greenDark, background: C.greenSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Markaya Ait</span>
+                      <div key={em.id} onClick={() => openDetail(em)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "#fff", flexShrink: 0 }}>{initials}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{em.first_name} {em.last_name}</div>
+                          <div style={{ fontSize: 11, color: C.textFaint }}>{[em.position, em.department].filter(Boolean).join(" · ") || "—"}</div>
                         </div>
-                        <span style={{ fontSize: 12, color: isSel ? C.greenDark : C.textFaint, fontWeight: isSel ? 600 : 400, flexShrink: 0, marginLeft: 6 }}>{cnt}</span>
+                        {em.contract_type && <span style={{ fontSize: 10, color: C.textMuted, background: C.neutralBg, padding: "2px 8px", borderRadius: 10, flexShrink: 0 }}>{CONTRACT_LABEL[em.contract_type] || em.contract_type}</span>}
+                        <span style={{ fontSize: 10, color: sm.fg, background: sm.bg, padding: "3px 9px", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: sm.dot }} />{sm.label}</span>
                       </div>
                     );
                   })}
                 </div>
               )}
-            </div>
-            <div>
-              {!selBranch ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}><i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Personeli görmek için bir şube seçin.</span></div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{selBranch.name} — Personel ({branchEmps.length})</div>
-                  {branchEmpLoading ? (
-                    <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-                  ) : branchEmps.length === 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-user-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bu şubede personel yok.</span></div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{branchEmps.map((em) => empRow(em))}</div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </>
-      )}
+            </>
+          )}
+        </div>
+      </div>
 
-      {/* ===== FRANCHISE ===== */}
-      {tab === "franchise" && (
-        <>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-            <div><div style={{ fontSize: 20, fontWeight: 700, color: C.ink }}>Franchise personeli</div><div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 3 }}>Ayrı işveren. Yalnızca isim ve pozisyon görünür.</div></div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.franchiseSoft, border: `0.5px solid ${C.franchiseSoft}`, color: C.franchise, borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 500 }}><i className="ti ti-shield-lock" style={{ fontSize: 15 }} aria-hidden="true" />KVKK · salt-okunur</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 18 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Franchise'lar</div>
-              {franchises.length === 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-building-store" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bağlı franchise yok.</span></div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {franchises.map((f) => {
-                    const isSel = selFran?.id === f.id;
-                    const cnt = franCounts[f.id] ?? 0;
-                    return (
-                      <div key={f.id} onClick={() => selectFran(f)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.franchise}` : `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: isSel ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
-                          <span style={{ fontSize: 9, color: C.franchise, background: C.franchiseSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Franchise</span>
-                        </div>
-                        <span style={{ fontSize: 12, color: isSel ? C.franchise : C.textFaint, fontWeight: isSel ? 600 : 400, flexShrink: 0, marginLeft: 6 }}>{cnt}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <div>
-              {!selFran ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}><i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Roster için bir franchise seçin.</span></div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{selFran.name} — Personel ({franRoster.length})</div>
-                  {franRosterLoading ? (
-                    <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-                  ) : franRoster.length === 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-user-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Personel yok.</span></div>
-                  ) : (
-                    <>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {franRoster.map((em, i) => {
-                          const initials = (em.first_name?.[0] || "") + (em.last_name?.[0] || "");
-                          return (
-                            <div key={i} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", display: "flex", alignItems: "center", gap: 11 }}>
-                              <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.franchiseSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: C.franchise, flexShrink: 0 }}>{initials}</div>
-                              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{em.first_name} {em.last_name}</div><div style={{ fontSize: 11, color: C.textFaint }}>{em.position || "—"}</div></div>
-                              <span style={{ fontSize: 10, color: em.is_active ? C.greenDark : C.textHint, background: em.is_active ? C.greenSoft : C.neutralBg, padding: "3px 9px", borderRadius: 10, fontWeight: 600, flexShrink: 0 }}>{em.is_active ? "Aktif" : "Pasif"}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div style={{ marginTop: 14, background: C.warnBg, border: `1px solid ${C.warnBorder}`, borderRadius: 12, padding: "11px 14px", fontSize: 11.5, color: C.warnInk, display: "flex", gap: 8 }}>
-                        <i className="ti ti-shield-lock" style={{ fontSize: 15, marginTop: 1, flexShrink: 0 }} aria-hidden="true" /><span><b>KVKK koruması.</b> Franchise ayrı işverendir. Maaş, IBAN ve TC bilgisi markaya gösterilmez.</span>
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* ===== Modal: Personel Ekle (merkez) ===== */}
-      {showForm && (
-        <Modal title="Personel Ekle — Merkez" onClose={() => setShowForm(false)}>
+      {/* Modal: Personel Ekle */}
+      {showForm && selected && (
+        <Modal title={`Personel Ekle — ${selected.name}`} onClose={() => setShowForm(false)}>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
             <div style={{ flex: 1 }}><label style={labelStyle}>Ad *</label><input style={inputStyle} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /></div>
             <div style={{ flex: 1 }}><label style={labelStyle}>Soyad *</label><input style={inputStyle} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /></div>
           </div>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-            <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="Operasyon Müdürü" /></div>
-            <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Yönetim" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="Barista" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Servis" /></div>
           </div>
           <div style={{ marginBottom: 12 }}><label style={labelStyle}>Sözleşme Tipi</label>
             <select style={inputStyle} value={form.contract_type} onChange={(e) => setForm({ ...form, contract_type: e.target.value })}>
-              <option value="full_time">Tam Zamanlı</option><option value="part_time">Yarı Zamanlı</option><option value="seasonal">Sezonluk</option><option value="contract">Sözleşmeli</option>
+              <option value="full_time">Tam Zamanlı</option>
+              <option value="part_time">Yarı Zamanlı</option>
+              <option value="seasonal">Sezonluk</option>
+              <option value="contract">Sözleşmeli</option>
             </select>
           </div>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
@@ -2371,7 +2301,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
         </Modal>
       )}
 
-      {/* ===== Modal: Personel Detay (merkez=yonet / sube=oku) ===== */}
+      {/* Modal: Personel Detay */}
       {detail && (
         <Modal title="Personel Detayı" onClose={() => setDetail(null)}>
           {!editing ? (
@@ -2379,7 +2309,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
               <div><span style={{ fontSize: 11, color: C.textFaint }}>Ad Soyad</span><div style={{ fontSize: 14, fontWeight: 600 }}>{detail.first_name} {detail.last_name}</div></div>
               <div><span style={{ fontSize: 11, color: C.textFaint }}>Pozisyon / Departman</span><div style={{ fontSize: 14 }}>{[detail.position, detail.department].filter(Boolean).join(" · ") || "—"}</div></div>
               <div><span style={{ fontSize: 11, color: C.textFaint }}>İletişim</span><div style={{ fontSize: 14 }}>{detail.email || "—"}{detail.phone ? ` · ${detail.phone}` : ""}</div></div>
-              <div><span style={{ fontSize: 11, color: C.textFaint }}>Brüt Maaş</span><div style={{ fontSize: 14 }}>{detail.base_salary != null ? `₺${Number(detail.base_salary).toLocaleString("tr-TR")}` : "—"}</div></div>
+              <div><span style={{ fontSize: 11, color: C.textFaint }}>Sözleşme</span><div style={{ fontSize: 14 }}>{detail.contract_type ? (CONTRACT_LABEL[detail.contract_type] || detail.contract_type) : "—"}</div></div>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 }}>
@@ -2408,7 +2338,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
           )}
           {msg && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {msg}</div>}
 
-          {canManage ? (
+          {!isFranchise && (
             <div style={{ display: "flex", gap: 8 }}>
               {!editing ? (
                 <>
@@ -2422,8 +2352,6 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
                 </>
               )}
             </div>
-          ) : (
-            <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-lock" style={{ fontSize: 14 }} aria-hidden="true" />Salt-okunur — şube yöneticisi yönetir.</div>
           )}
         </Modal>
       )}

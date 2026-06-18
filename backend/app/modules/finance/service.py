@@ -50,20 +50,22 @@ class FinanceService:
         db.add(log)
 
     # ── Categories ──
-    async def list_categories(self, db: AsyncSession, company_id: str, kind: str | None = None):
+    async def list_categories(self, db: AsyncSession, company_id: str, kind: str | None = None, scope: str | None = None):
         q = select(FinanceCategory).where(
             FinanceCategory.company_id == company_id,
             FinanceCategory.is_active == True,
         )
         if kind:
             q = q.where(FinanceCategory.kind == FinanceKind(kind))
+        if scope:
+            q = q.where(FinanceCategory.scope == scope)
         q = q.order_by(FinanceCategory.created_at)
         return (await db.execute(q)).scalars().all()
 
-    async def create_category(self, db: AsyncSession, company_id: str, name: str, kind: str):
+    async def create_category(self, db: AsyncSession, company_id: str, name: str, kind: str, scope: str | None = None):
         if kind not in ("income", "expense"):
             raise HTTPException(status_code=400, detail="kind must be income or expense.")
-        cat = FinanceCategory(company_id=company_id, name=name.strip(), kind=FinanceKind(kind))
+        cat = FinanceCategory(company_id=company_id, name=name.strip(), kind=FinanceKind(kind), scope=scope)
         db.add(cat)
         await db.commit()
         await db.refresh(cat)
@@ -92,7 +94,7 @@ class FinanceService:
     async def list_entries(self, db: AsyncSession, company_id: str,
                            year: int | None = None, month: int | None = None,
                            branch_id: str | None = None, kind: str | None = None,
-                           include_deleted: bool = False):
+                           include_deleted: bool = False, scope: str | None = None):
         q = select(FinanceEntry, FinanceCategory.name).join(
             FinanceCategory, FinanceEntry.category_id == FinanceCategory.id
         ).where(FinanceEntry.company_id == company_id)
@@ -106,6 +108,8 @@ class FinanceService:
             q = q.where(FinanceEntry.branch_id == branch_id)
         if kind:
             q = q.where(FinanceEntry.kind == FinanceKind(kind))
+        if scope:
+            q = q.where(FinanceCategory.scope == scope)
         q = q.order_by(FinanceEntry.entry_date.desc(), FinanceEntry.created_at.desc())
         rows = (await db.execute(q)).all()
         out = []
@@ -271,6 +275,7 @@ class FinanceService:
             FinanceEntry.is_deleted == False,
             FinanceEntry.entry_date >= start,
             FinanceEntry.entry_date <= end,
+            FinanceCategory.scope == "brand",
         ).group_by(FinanceEntry.category_id, FinanceCategory.name, FinanceCategory.kind)
         cat_rows = (await db.execute(cat_q)).all()
 

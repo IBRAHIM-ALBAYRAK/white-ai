@@ -83,9 +83,6 @@ export default function BrandPanel({
   companyName?: string | null;
 }) {
   const [page, setPage] = useState("overview");
-  const [financeTab, setFinanceTab] = useState<"overview" | "branches" | "franchise">("overview");
-  const [payrollTab, setPayrollTab] = useState<"merkez" | "branches" | "franchise">("merkez");
-  const [staffTab, setStaffTab] = useState<"merkez" | "branches" | "franchise">("merkez");
   const [jumpBranch, setJumpBranch] = useState<string | null>(null);
   const goToBranch = (branchId: string, target: string) => { setJumpBranch(branchId); setPage(target); };
   const brandName = companyName || "Markam";
@@ -144,31 +141,8 @@ export default function BrandPanel({
             <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.02em" }}>{brandName}</span>
             <span style={{ fontSize: 11, color: C.textHint, marginTop: 1 }}>{PAGE_TITLE[page]}</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {page === "finance" && (
-              <div style={{ display: "inline-flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: 3 }}>
-                {(["overview", "branches", "franchise"] as const).map((t) => (
-                  <div key={t} onClick={() => setFinanceTab(t)} style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: financeTab === t ? 600 : 500, color: financeTab === t ? "#fff" : C.textFaint, background: financeTab === t ? C.ink : "transparent", borderRadius: 8, cursor: "pointer" }}>{t === "overview" ? "Genel Bakış" : t === "branches" ? "Şubeler" : "Franchise"}</div>
-                ))}
-              </div>
-            )}
-            {page === "payroll" && (
-              <div style={{ display: "inline-flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: 3 }}>
-                {(["merkez", "branches", "franchise"] as const).map((t) => (
-                  <div key={t} onClick={() => setPayrollTab(t)} style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: payrollTab === t ? 600 : 500, color: payrollTab === t ? "#fff" : C.textFaint, background: payrollTab === t ? C.ink : "transparent", borderRadius: 8, cursor: "pointer" }}>{t === "merkez" ? "Marka" : t === "branches" ? "Şubeler" : "Franchise"}</div>
-                ))}
-              </div>
-            )}
-            {page === "staff" && (
-              <div style={{ display: "inline-flex", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: 3 }}>
-                {(["merkez", "branches", "franchise"] as const).map((t) => (
-                  <div key={t} onClick={() => setStaffTab(t)} style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: staffTab === t ? 600 : 500, color: staffTab === t ? "#fff" : C.textFaint, background: staffTab === t ? C.ink : "transparent", borderRadius: 8, cursor: "pointer" }}>{t === "merkez" ? "Marka" : t === "branches" ? "Şubeler" : "Franchise"}</div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.green, background: C.greenSoft, padding: "4px 10px", borderRadius: 20 }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green }} />Canlı
-            </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.green, background: C.greenSoft, padding: "4px 10px", borderRadius: 20 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green }} />Canlı
           </div>
         </div>
 
@@ -176,11 +150,11 @@ export default function BrandPanel({
           {page === "overview" && <OverviewPage firstName={user.first_name} token={token} />}
           {page === "company" && <CompanyPage token={token} companyId={user.company_id || ""} brandName={brandName} />}
           {page === "franchises" && <BranchesPage token={token} companyId={user.company_id || ""} goToBranch={goToBranch} />}
-          {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} tab={staffTab} setTab={setStaffTab} />}
+          {page === "staff" && <StaffPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "inventory" && <InventoryPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
-          {page === "payroll" && <PayrollPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} tab={payrollTab} setTab={setPayrollTab} />}
+          {page === "payroll" && <PayrollPage token={token} companyId={user.company_id || ""} jumpBranch={jumpBranch} clearJump={() => setJumpBranch(null)} />}
           {page === "ledger" && <LedgerPage token={token} companyId={user.company_id || ""} />}
-          {page === "finance" && <FinancePage token={token} companyId={user.company_id || ""} tab={financeTab} setTab={setFinanceTab} />}
+          {page === "finance" && <FinancePage token={token} companyId={user.company_id || ""} />}
           {page !== "overview" && page !== "company" && page !== "franchises" && page !== "staff" && page !== "inventory" && page !== "payroll" && page !== "ledger" && page !== "finance" && <Placeholder title={PAGE_TITLE[page]} />}
         </div>
       </main>
@@ -245,9 +219,10 @@ const LEGAL_LABELS: Record<string, string> = { limited: "Limited Şti.", anonim:
 const SECTOR_LABELS: Record<string, string> = { yeme_icme: "Yeme-İçme", ticaret: "Ticaret", hizmet: "Hizmet", insaat: "İnşaat", bilisim: "Bilişim", uretim: "Üretim", tarim: "Tarım", finans: "Finans", diger: "Diğer" };
 
 // ── Finans — Genel Bakış (marka geneli, salt-okunur) ──────────────────────
-function FinancePage({ token, companyId, tab, setTab }: { token: string; companyId: string; tab: "overview" | "branches" | "franchise"; setTab: (t: "overview" | "branches" | "franchise") => void }) {
+function FinancePage({ token, companyId }: { token: string; companyId: string }) {
   const headers = { Authorization: `Bearer ${token}` };
   const today = new Date();
+  const [tab, setTab] = useState<"overview" | "branches" | "franchise">("overview");
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [data, setData] = useState<OverviewData | null>(null);
@@ -256,7 +231,6 @@ function FinancePage({ token, companyId, tab, setTab }: { token: string; company
   const [sector, setSector] = useState("diger");
   const [branches, setBranches] = useState<{ id: string; name: string; address?: string }[]>([]);
   const [selBranch, setSelBranch] = useState<string | null>(null);
-  useEffect(() => { if (tab !== "branches") setSelBranch(null); }, [tab]);
 
   const load = async () => {
     setLoading(true);
@@ -289,10 +263,19 @@ function FinancePage({ token, companyId, tab, setTab }: { token: string; company
   const barMax = Math.max(income, totalExpense, tax, Math.abs(net), 1);
   const bars = [{ label: "Gelir", val: income, color: "#1FA85A" }, { label: "Giderler", val: expense, color: "#C0564B" }, { label: "Devlet/Vergi", val: tax, color: "#7C6B9A" }, { label: "Net", val: net, color: net >= 0 ? "#1FA85A" : "#C0564B" }];
 
+  const tabBtn = (id: "overview" | "branches" | "franchise", label: string) => (
+    <div onClick={() => { setTab(id); if (id !== "branches") setSelBranch(null); }} style={{ padding: "7px 15px", fontSize: 12.5, fontWeight: tab === id ? 600 : 500, color: tab === id ? "#fff" : C.textFaint, background: tab === id ? C.ink : "transparent", borderRadius: 8, cursor: "pointer" }}>{label}</div>
+  );
   const card: React.CSSProperties = { background: C.bg, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.03)" };
 
   return (
     <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+        <div style={{ display: "inline-flex", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: 3 }}>
+          {tabBtn("overview", "Genel Bakış")}{tabBtn("branches", "Şubeler")}{tabBtn("franchise", "Franchise")}
+        </div>
+      </div>
+
       {tab === "franchise" ? (
         <div style={{ ...card, textAlign: "center", padding: "60px 20px" }}>
           <i className="ti ti-tools" style={{ fontSize: 30, color: C.textHint }} aria-hidden="true" />
@@ -303,29 +286,23 @@ function FinancePage({ token, companyId, tab, setTab }: { token: string; company
         selBranch ? (
           <BranchFinanceDetail token={token} branchId={selBranch} branchName={branches.find((b) => b.id === selBranch)?.name || "Şube"} year={year} month={month} legalType={legalType} sector={sector} onBack={() => setSelBranch(null)} />
         ) : (
-          <div>
-            <div style={{ background: "#0A0A0A", borderRadius: 16, padding: "18px 20px", boxShadow: "0 4px 18px rgba(0,0,0,0.13)", marginBottom: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>Şubeler</span>
-                <span style={{ fontSize: 11.5, color: "#2EE06A" }}>{AYLAR_F[month - 1]} {year} · salt-okunur</span>
-              </div>
-              <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 5, opacity: 0.9 }}>Bir şube seç — o şubenin kendi gelir/gideri açılır.</div>
+          <div style={card}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>Şubeler</span>
+              <span style={{ fontSize: 11.5, color: C.textHint }}>{AYLAR_F[month - 1]} {year} · salt-okunur</span>
             </div>
+            <div style={{ fontSize: 12, color: C.textFaint, marginBottom: 14 }}>Bir şube seç — o şubenin kendi gelir/gideri açılır.</div>
             {branches.length === 0 ? (
-              <div style={{ ...card, fontSize: 12.5, color: C.textFaint, padding: "28px 0", textAlign: "center" }}>Şube bulunamadı.</div>
-            ) : (
-              <div style={{ ...card, padding: "6px 8px" }}>
-                {branches.map((b, idx) => (
-                  <div key={b.id} onClick={() => setSelBranch(b.id)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 12px", borderTop: idx === 0 ? "none" : `1px solid ${C.borderSoft}`, cursor: "pointer", borderRadius: 10 }} onMouseEnter={(e) => (e.currentTarget.style.background = C.surface)} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div style={{ width: 38, height: 38, borderRadius: 10, background: C.greenSoft, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><i className="ti ti-building-store" style={{ fontSize: 18, color: C.greenDark }} aria-hidden="true" /></div>
-                      <div style={{ minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>{b.name}</div>{b.address ? <div style={{ fontSize: 12, color: C.textHint, marginTop: 1 }}>{b.address}</div> : null}</div>
-                    </div>
-                    <span style={{ fontSize: 12.5, color: C.greenDark, fontWeight: 500, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>Finansı gör <i className="ti ti-chevron-right" style={{ fontSize: 15 }} aria-hidden="true" /></span>
-                  </div>
-                ))}
+              <div style={{ fontSize: 12.5, color: C.textFaint, padding: "20px 0", textAlign: "center" }}>Şube bulunamadı.</div>
+            ) : branches.map((b) => (
+              <div key={b.id} onClick={() => setSelBranch(b.id)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 14px", borderTop: `1px solid ${C.borderSoft}`, cursor: "pointer" }} onMouseEnter={(e) => (e.currentTarget.style.background = C.surface)} onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: C.greenSoft, display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-building-store" style={{ fontSize: 18, color: C.greenDark }} aria-hidden="true" /></div>
+                  <div><div style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>{b.name}</div>{b.address ? <div style={{ fontSize: 11.5, color: C.textHint, marginTop: 1 }}>{b.address}</div> : null}</div>
+                </div>
+                <span style={{ fontSize: 12, color: C.greenDark, fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>Finansı gör <i className="ti ti-chevron-right" style={{ fontSize: 15 }} aria-hidden="true" /></span>
               </div>
-            )}
+            ))}
           </div>
         )
       ) : (
@@ -1462,62 +1439,26 @@ type PayRow = {
 const AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 const fmtTL2 = (n: number) => "₺" + (n ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function PayrollPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void; tab: "merkez" | "branches" | "franchise"; setTab: (t: "merkez" | "branches" | "franchise") => void }) {
+function PayrollPage({ token, companyId, jumpBranch, clearJump }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void }) {
   const headers = { Authorization: `Bearer ${token}` };
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
-
-  // Merkez (sube-siz personel)
-  const [merkezRows, setMerkezRows] = useState<PayRow[]>([]);
-  const [merkezLoading, setMerkezLoading] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [runErr, setRunErr] = useState("");
-
-  // Subeler
   const [branches, setBranches] = useState<PayBranch[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
   const [counts, setCounts] = useState<Record<string, { total: number; done: number }>>({});
   const [selected, setSelected] = useState<PayBranch | null>(null);
   const [rows, setRows] = useState<PayRow[]>([]);
   const [rowsLoading, setRowsLoading] = useState(false);
-
-  // Franchise (sadece toplam)
-  const [franTotals, setFranTotals] = useState<any[]>([]);
-  const [franLoading, setFranLoading] = useState(false);
-
+  const [running, setRunning] = useState(false);
+  const [runErr, setRunErr] = useState("");
   const [slip, setSlip] = useState<{ row: PayRow; p: Payslip } | null>(null);
 
-  // ── Merkez ──
-  const loadMerkez = async (y: number, m: number) => {
-    setMerkezLoading(true); setRunErr("");
-    try { const r = await axios.get(`${API_URL}/payroll/merkez/${y}/${m}?t=${Date.now()}`, { headers }); setMerkezRows(r.data); }
-    catch { setMerkezRows([]); }
-    setMerkezLoading(false);
-  };
-  useEffect(() => { if (tab === "merkez") loadMerkez(year, month); /* eslint-disable-next-line */ }, [tab, year, month]);
-
-  const runMerkez = async () => {
-    if (running) return;
-    setRunning(true); setRunErr("");
-    try {
-      const r = await axios.post(`${API_URL}/payroll/run-merkez`, { year, month }, { headers });
-      const fails = r.data.filter((x: any) => !x.ok);
-      if (fails.length) setRunErr(`${fails.length} çalışan hesaplanamadı (maaş tanımsız olabilir).`);
-      await loadMerkez(year, month);
-    } catch (e: any) { const d = e.response?.data?.detail; setRunErr(typeof d === "string" ? d : "Dönem çalıştırılamadı."); }
-    setRunning(false);
-  };
-  const runOneMerkez = async (employee_id: string) => {
-    setRunErr("");
-    try { await axios.post(`${API_URL}/payroll/run-through`, { employee_id, year, month }, { headers }); await loadMerkez(year, month); }
-    catch (e: any) { const d = e.response?.data?.detail; setRunErr(typeof d === "string" ? d : "Hesaplanamadı."); }
-  };
-
-  // ── Subeler ──
   const loadBranches = async () => {
-    try { const r = await axios.get(`${API_URL}/companies/${companyId}/branches?t=${Date.now()}`, { headers }); setBranches(r.data.map((b: any) => ({ id: b.id, name: b.name, address: b.address }))); }
-    catch { setBranches([]); }
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/branches?t=${Date.now()}`, { headers });
+      setBranches(r.data.map((b: any) => ({ id: b.id, name: b.name, address: b.address })));
+    } catch { setBranches([]); }
     setBranchesLoaded(true);
   };
   useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
@@ -1525,26 +1466,26 @@ function PayrollPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: {
   const loadCounts = async (y: number, m: number, list: PayBranch[]) => {
     const c: Record<string, { total: number; done: number }> = {};
     await Promise.all(list.map(async (b) => {
-      try { const r = await axios.get(`${API_URL}/payroll/branch/${b.id}/${y}/${m}?t=${Date.now()}`, { headers }); c[b.id] = { total: r.data.length, done: r.data.filter((x: PayRow) => x.payslip).length }; }
-      catch { c[b.id] = { total: 0, done: 0 }; }
+      try {
+        const r = await axios.get(`${API_URL}/payroll/branch/${b.id}/${y}/${m}?t=${Date.now()}`, { headers });
+        c[b.id] = { total: r.data.length, done: r.data.filter((x: PayRow) => x.payslip).length };
+      } catch { c[b.id] = { total: 0, done: 0 }; }
     }));
     setCounts(c);
   };
-  useEffect(() => { if (tab === "branches" && branchesLoaded && branches.length) loadCounts(year, month, branches); /* eslint-disable-next-line */ }, [tab, branchesLoaded, branches.length, year, month]);
+  useEffect(() => { if (branchesLoaded && branches.length) loadCounts(year, month, branches); /* eslint-disable-next-line */ }, [branchesLoaded, branches.length, year, month]);
 
   const loadRows = async (b: PayBranch, y: number, m: number) => {
-    setRowsLoading(true);
+    setRowsLoading(true); setRunErr("");
     try { const r = await axios.get(`${API_URL}/payroll/branch/${b.id}/${y}/${m}?t=${Date.now()}`, { headers }); setRows(r.data); }
     catch { setRows([]); }
     setRowsLoading(false);
   };
   const selectBranch = (b: PayBranch) => { setSelected(b); loadRows(b, year, month); };
-  useEffect(() => { if (selected && tab === "branches") loadRows(selected, year, month); /* eslint-disable-next-line */ }, [year, month]);
+  useEffect(() => { if (selected) loadRows(selected, year, month); /* eslint-disable-next-line */ }, [year, month]);
 
-  // jumpBranch -> Subeler sekmesine git, subeyi sec
   useEffect(() => {
     if (jumpBranch && branchesLoaded && branches.length) {
-      setTab("branches");
       const t = branches.find((b) => b.id === jumpBranch);
       if (t) selectBranch(t);
       if (clearJump) clearJump();
@@ -1552,218 +1493,190 @@ function PayrollPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: {
     /* eslint-disable-next-line */
   }, [jumpBranch, branchesLoaded, branches.length]);
 
-  // ── Franchise ──
-  const loadFran = async (y: number, m: number) => {
-    setFranLoading(true);
-    try { const r = await axios.get(`${API_URL}/payroll/franchise-totals/${y}/${m}?t=${Date.now()}`, { headers }); setFranTotals(r.data); }
-    catch { setFranTotals([]); }
-    setFranLoading(false);
-  };
-  useEffect(() => { if (tab === "franchise") loadFran(year, month); /* eslint-disable-next-line */ }, [tab, year, month]);
-
-  // ── shared month nav ──
   const prevMonth = () => { if (month === 1) { setMonth(12); setYear(year - 1); } else setMonth(month - 1); };
-  const nextMonth = () => { const isCur = year === today.getFullYear() && month === today.getMonth() + 1; if (isCur) return; if (month === 12) { setMonth(1); setYear(year + 1); } else setMonth(month + 1); };
+  const nextMonth = () => {
+    const isCurrent = year === today.getFullYear() && month === today.getMonth() + 1;
+    if (isCurrent) return; // gelecek ay yok
+    if (month === 12) { setMonth(1); setYear(year + 1); } else setMonth(month + 1);
+  };
   const atCurrent = year === today.getFullYear() && month === today.getMonth() + 1;
 
-  const activeRows: PayRow[] = tab === "merkez" ? merkezRows : rows;
-  const activeLoading = tab === "merkez" ? merkezLoading : rowsLoading;
-  const readOnly = tab === "branches";
-  const done = activeRows.filter((r) => r.payslip);
+  const runBranch = async () => {
+    if (!selected || running) return;
+    setRunning(true); setRunErr("");
+    try {
+      const r = await axios.post(`${API_URL}/payroll/run-branch`, { branch_id: selected.id, year, month }, { headers });
+      const fails = r.data.filter((x: any) => !x.ok);
+      if (fails.length) setRunErr(`${fails.length} çalışan hesaplanamadı (maaş tanımsız olabilir).`);
+      await loadRows(selected, year, month);
+      loadCounts(year, month, branches);
+    } catch (e: any) { const d = e.response?.data?.detail; setRunErr(typeof d === "string" ? d : "Dönem çalıştırılamadı."); }
+    setRunning(false);
+  };
+  const runOne = async (employee_id: string) => {
+    if (!selected) return;
+    setRunErr("");
+    try {
+      await axios.post(`${API_URL}/payroll/run-through`, { employee_id, year, month }, { headers });
+      await loadRows(selected, year, month);
+      loadCounts(year, month, branches);
+    } catch (e: any) { const d = e.response?.data?.detail; setRunErr(typeof d === "string" ? d : "Hesaplanamadı."); }
+  };
+
+  const done = rows.filter((r) => r.payslip);
   const totGross = done.reduce((a, r) => a + (r.payslip!.gross), 0);
   const totNet = done.reduce((a, r) => a + (r.payslip!.net_salary), 0);
   const totCost = done.reduce((a, r) => a + (r.payslip!.employer_cost), 0);
   const totState = totCost - totNet;
-
-  const subtitle = tab === "merkez" ? "Markanın kendi (şubesiz) personeli. Dönemi hesapla, fişleri incele."
-    : tab === "branches" ? "Şube bordrosunu şube yöneticisi çalıştırır. Marka panelinde salt-okunur."
-    : "Franchise bordrosu işletmeye özeldir — yalnızca toplam işçilik maliyeti görünür.";
-  const bandTitle = tab === "merkez" ? "Merkez (şubesiz personel)" : selected?.name || "";
-  const slipContext = tab === "merkez" ? "Merkez" : (selected?.name || "");
-
-  const monthNav = (
-    <div style={{ display: "flex", alignItems: "center", background: C.surface, border: "0.5px solid #E6E4DD", borderRadius: 10, overflow: "hidden" }}>
-      <button onClick={prevMonth} aria-label="Önceki ay" style={{ border: "none", background: "transparent", padding: "8px 11px", cursor: "pointer", color: C.textFaint, display: "flex" }}><i className="ti ti-chevron-left" style={{ fontSize: 15 }} aria-hidden="true" /></button>
-      <span style={{ fontSize: 13, fontWeight: 600, padding: "0 6px", minWidth: 110, textAlign: "center" }}>{AYLAR[month - 1]} {year}</span>
-      <button onClick={nextMonth} aria-label="Sonraki ay" style={{ border: "none", background: "transparent", padding: "8px 11px", cursor: atCurrent ? "not-allowed" : "pointer", color: atCurrent ? "#E0DDD6" : C.textFaint, display: "flex" }}><i className="ti ti-chevron-right" style={{ fontSize: 15 }} aria-hidden="true" /></button>
-    </div>
-  );
-
-  const renderBandAndTable = () => (
-    <>
-      <div style={{ background: C.ink, borderRadius: 14, padding: "16px 19px", marginBottom: 13, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 10.5, color: "#7C7A75", marginBottom: 4 }}>{AYLAR[month - 1]} {year} · {bandTitle} · İşveren Toplam Maliyeti</div>
-          <div style={{ fontSize: 25, fontWeight: 600, color: "#fff", letterSpacing: "-0.02em" }}>{activeLoading ? "—" : fmtTL2(totCost)}</div>
-        </div>
-        <div style={{ display: "flex", gap: 22, textAlign: "right" }}>
-          <div><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{activeLoading ? "—" : fmtTL2(totGross)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>toplam brüt</div></div>
-          <div><div style={{ fontSize: 14, fontWeight: 600, color: "#2EE06A" }}>{activeLoading ? "—" : fmtTL2(totNet)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>çalışana net</div></div>
-          <div><div style={{ fontSize: 14, fontWeight: 600, color: "#E0A82E" }}>{activeLoading ? "—" : fmtTL2(totState)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>devlete giden</div></div>
-        </div>
-      </div>
-
-      {runErr && !readOnly && <div style={{ fontSize: 12, color: C.warnInk, background: C.warnBg, border: `0.5px solid ${C.warnBorder}`, borderRadius: 9, padding: "8px 12px", marginBottom: 11 }}>⚠ {runErr}</div>}
-
-      {activeLoading ? (
-        <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-      ) : activeRows.length === 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
-          <i className="ti ti-users" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5, textAlign: "center", maxWidth: 320 }}>{tab === "merkez" ? "Şubesiz personel yok. Personel'den şubesiz çalışan ekleyince burada görünür." : "Bu şubede aktif personel yok."}</span>
-        </div>
-      ) : (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "1.9fr 1fr 1fr 0.95fr 36px", gap: 10, padding: "0 15px 7px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-            <span>çalışan</span><span style={{ textAlign: "right" }}>brüt</span><span style={{ textAlign: "right" }}>net</span><span style={{ textAlign: "center" }}>durum</span><span></span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            {activeRows.map((r) => {
-              const p = r.payslip;
-              const noSalary = r.base_salary == null;
-              const initials = (r.first_name?.[0] || "") + (r.last_name?.[0] || "");
-              return (
-                <div key={r.employee_id} onClick={() => { if (p) setSlip({ row: r, p }); }} style={{ background: C.bg, border: p ? `0.5px solid ${C.border}` : `0.5px dashed #E0DACE`, borderRadius: 11, padding: "11px 15px", cursor: p ? "pointer" : "default", display: "grid", gridTemplateColumns: "1.9fr 1fr 1fr 0.95fr 36px", gap: 10, alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: "50%", background: p ? C.greenSoft : C.neutralBg, color: p ? C.greenDark : C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, flexShrink: 0 }}>{initials}</div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, color: p ? C.ink : C.textMuted }}>{r.first_name} {r.last_name}</div>
-                      <div style={{ fontSize: 10.5, color: C.textFaint }}>{r.position || "—"}{p ? ` · ${p.sgk_days} gün` : ""}</div>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 12.5, textAlign: "right", color: p ? "#3C3A36" : "#C9C5BD" }}>{p ? fmtTL2(p.gross) : "—"}</div>
-                  <div style={{ fontSize: 13, fontWeight: 600, textAlign: "right", color: p ? C.greenDark : "#C9C5BD" }}>{p ? fmtTL2(p.net_salary) : "—"}</div>
-                  <div style={{ textAlign: "center" }}>
-                    {p ? (
-                      <span style={{ fontSize: 10, color: C.greenDark, background: C.greenSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><i className="ti ti-check" style={{ fontSize: 11 }} aria-hidden="true" />Hesaplandı</span>
-                    ) : noSalary ? (
-                      <span style={{ fontSize: 10, color: C.warnInk, background: C.warnBg, padding: "4px 10px", borderRadius: 12, fontWeight: 600 }}>Maaş Tanımsız</span>
-                    ) : (
-                      <span style={{ fontSize: 10, color: C.warnInk, background: C.warnBg, padding: "4px 10px", borderRadius: 12, fontWeight: 600 }}>Bekliyor</span>
-                    )}
-                  </div>
-                  {readOnly ? (
-                    p ? <i className="ti ti-chevron-right" style={{ fontSize: 15, color: "#D4D0C8", margin: "0 auto" }} aria-hidden="true" /> : <i className="ti ti-lock" style={{ fontSize: 14, color: C.textHint, margin: "0 auto" }} aria-hidden="true" />
-                  ) : p ? (
-                    <i className="ti ti-chevron-right" style={{ fontSize: 15, color: "#D4D0C8", margin: "0 auto" }} aria-hidden="true" />
-                  ) : noSalary ? (
-                    <i className="ti ti-lock" style={{ fontSize: 14, color: C.textHint, margin: "0 auto" }} aria-hidden="true" />
-                  ) : (
-                    <button onClick={(e) => { e.stopPropagation(); runOneMerkez(r.employee_id); }} aria-label="Bordroyu çalıştır" style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: C.green, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}><i className="ti ti-player-play" style={{ fontSize: 13, color: "#fff" }} aria-hidden="true" /></button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </>
-  );
 
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>Bordro</div>
-          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>{subtitle}</div>
+          <div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 2 }}>Dönem bordrosunu hesapla, fişleri incele. Yeniden çalıştırma düzeltmedir.</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {monthNav}
-          {tab === "merkez" && (
-            <button onClick={runMerkez} disabled={running || merkezRows.length === 0} style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", background: running || merkezRows.length === 0 ? "#8A867F" : C.ink, border: "none", padding: "9px 16px", borderRadius: 10, cursor: running || merkezRows.length === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7 }}>
-              <i className={`ti ${running ? "ti-loader-2" : "ti-bolt"}`} style={{ fontSize: 15, color: "#2EE06A" }} aria-hidden="true" />{running ? "Hesaplanıyor…" : "Dönemi Çalıştır"}
-            </button>
-          )}
-          {tab === "branches" && (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.neutralBg, border: `0.5px solid ${C.border}`, color: C.textFaint, borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 500 }}><i className="ti ti-lock" style={{ fontSize: 15 }} aria-hidden="true" />Salt-okunur</div>
-          )}
+          <div style={{ display: "flex", alignItems: "center", background: C.surface, border: "0.5px solid #E6E4DD", borderRadius: 10, overflow: "hidden" }}>
+            <button onClick={prevMonth} aria-label="Önceki ay" style={{ border: "none", background: "transparent", padding: "8px 11px", cursor: "pointer", color: C.textFaint, display: "flex" }}><i className="ti ti-chevron-left" style={{ fontSize: 15 }} aria-hidden="true" /></button>
+            <span style={{ fontSize: 13, fontWeight: 600, padding: "0 6px", minWidth: 110, textAlign: "center" }}>{AYLAR[month - 1]} {year}</span>
+            <button onClick={nextMonth} aria-label="Sonraki ay" style={{ border: "none", background: "transparent", padding: "8px 11px", cursor: atCurrent ? "not-allowed" : "pointer", color: atCurrent ? "#E0DDD6" : C.textFaint, display: "flex" }}><i className="ti ti-chevron-right" style={{ fontSize: 15 }} aria-hidden="true" /></button>
+          </div>
+          <button onClick={runBranch} disabled={!selected || running} style={{ fontSize: 12.5, fontWeight: 600, color: "#fff", background: !selected || running ? "#8A867F" : C.ink, border: "none", padding: "9px 16px", borderRadius: 10, cursor: !selected || running ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 7 }}>
+            <i className={`ti ${running ? "ti-loader-2" : "ti-bolt"}`} style={{ fontSize: 15, color: "#2EE06A" }} aria-hidden="true" />{running ? "Hesaplanıyor…" : "Dönemi Çalıştır"}
+          </button>
         </div>
       </div>
       <div style={{ height: 14 }} />
 
-      {tab === "merkez" ? (
-        renderBandAndTable()
-      ) : tab === "branches" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.7fr", gap: 18 }}>
-          <div>
-            <div style={{ fontSize: 11, color: C.textHint, fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>Şubeler</div>
-            {!branchesLoaded ? (
-              <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-            ) : branches.length === 0 ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
-                <i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Henüz şube yok.</span>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {branches.map((b) => {
-                  const isSel = selected?.id === b.id;
-                  const cnt = counts[b.id];
-                  const pct = cnt && cnt.total > 0 ? Math.round((cnt.done / cnt.total) * 100) : 0;
-                  const full = cnt && cnt.total > 0 && cnt.done === cnt.total;
-                  return (
-                    <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `0.5px solid ${C.border}`, borderRadius: 13, padding: "13px 15px", cursor: "pointer" }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{b.name}</div>
-                      <div style={{ height: 4, background: "#EFEFEC", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
-                        <div style={{ width: `${pct}%`, height: "100%", background: full ? C.green : "#E0A82E", borderRadius: 3 }} />
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: 11, color: cnt && cnt.done > 0 ? C.greenDark : C.warnInk, fontWeight: 600 }}>{cnt ? (cnt.total === 0 ? "Personel yok" : `${cnt.done}/${cnt.total} hesaplandı`) : "—"}</span>
-                        <span style={{ fontSize: 11, color: C.textFaint }}>{cnt?.total ?? "—"} personel</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <div>
-            {!selected ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
-                <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bordroyu görmek için bir şube seçin.</span>
-              </div>
-            ) : renderBandAndTable()}
-          </div>
-        </div>
-      ) : (
+      <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.7fr", gap: 18 }}>
+        {/* SOL: markaya ait subeler */}
         <div>
-          {franLoading ? (
-            <div style={{ fontSize: 12.5, color: C.textHint, padding: "40px 0", textAlign: "center" }}>Yükleniyor…</div>
-          ) : franTotals.length === 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "50px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
-              <i className="ti ti-building-store" style={{ fontSize: 24 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bağlı franchise yok.</span>
+          <div style={{ fontSize: 11, color: C.textHint, fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>Şubeler</div>
+          {!branchesLoaded ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+          ) : branches.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+              <i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Henüz şube yok.</span>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {franTotals.map((f) => (
-                <div key={f.company_id} style={{ background: C.bg, border: `0.5px solid ${C.border}`, borderRadius: 14, padding: "16px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-                    <div style={{ width: 42, height: 42, borderRadius: 11, background: C.franchiseSoft, display: "flex", alignItems: "center", justifyContent: "center" }}><i className="ti ti-building-store" style={{ fontSize: 20, color: C.franchise }} aria-hidden="true" /></div>
-                    <div><div style={{ fontSize: 14.5, fontWeight: 600, color: C.ink }}>{f.name}</div><div style={{ fontSize: 12, color: C.textHint, marginTop: 1 }}>{f.employee_count} personel · {f.calculated_count}/{f.employee_count} hesaplandı</div></div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {branches.map((b) => {
+                const isSel = selected?.id === b.id;
+                const cnt = counts[b.id];
+                const pct = cnt && cnt.total > 0 ? Math.round((cnt.done / cnt.total) * 100) : 0;
+                const full = cnt && cnt.total > 0 && cnt.done === cnt.total;
+                return (
+                  <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `0.5px solid ${C.border}`, borderRadius: 13, padding: "13px 15px", cursor: "pointer" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{b.name}</div>
+                    <div style={{ height: 4, background: "#EFEFEC", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: full ? C.green : "#E0A82E", borderRadius: 3 }} />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 11, color: cnt && cnt.done > 0 ? C.greenDark : C.warnInk, fontWeight: 600 }}>{cnt ? (cnt.total === 0 ? "Personel yok" : `${cnt.done}/${cnt.total} hesaplandı`) : "—"}</span>
+                      <span style={{ fontSize: 11, color: C.textFaint }}>{cnt?.total ?? "—"} personel</span>
+                    </div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 11, color: C.textHint, display: "flex", alignItems: "center", gap: 5, justifyContent: "flex-end" }}><i className="ti ti-lock" style={{ fontSize: 13 }} aria-hidden="true" />Toplam işçilik maliyeti</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: C.ink, marginTop: 3 }}>{fmtTL2(f.total_employer_cost)}</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
-          <div style={{ marginTop: 14, background: C.warnBg, border: `1px solid ${C.warnBorder}`, borderRadius: 12, padding: "11px 14px", fontSize: 11.5, color: C.warnInk, display: "flex", gap: 8 }}>
-            <i className="ti ti-shield-lock" style={{ fontSize: 15, marginTop: 1, flexShrink: 0 }} aria-hidden="true" />
-            <span><b>KVKK koruması.</b> Franchise ayrı işverendir. Marka yalnızca toplam işçilik maliyetini görür; çalışan adı, maaşı ve fişi paylaşılmaz.</span>
+          <div style={{ marginTop: 12, display: "flex", alignItems: "flex-start", gap: 8, padding: "11px 13px", background: C.surface, borderRadius: 11 }}>
+            <i className="ti ti-shield-lock" style={{ fontSize: 15, color: C.franchise, marginTop: 1 }} aria-hidden="true" />
+            <span style={{ fontSize: 10.5, color: C.textFaint, lineHeight: 1.5 }}>Franchise bordroları işletmenin özelidir — bu ekranda yalnızca markaya ait şubeler yer alır.</span>
           </div>
         </div>
-      )}
 
+        {/* SAG */}
+        <div>
+          {!selected ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
+              <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bordro için bir şube seçin.</span>
+            </div>
+          ) : (
+            <>
+              {/* hero */}
+              <div style={{ background: C.ink, borderRadius: 14, padding: "16px 19px", marginBottom: 13, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 10.5, color: "#7C7A75", marginBottom: 4 }}>{AYLAR[month - 1]} {year} · {selected.name} · İşveren Toplam Maliyeti</div>
+                  <div style={{ fontSize: 25, fontWeight: 600, color: "#fff", letterSpacing: "-0.02em" }}>{rowsLoading ? "—" : fmtTL2(totCost)}</div>
+                </div>
+                <div style={{ display: "flex", gap: 22, textAlign: "right" }}>
+                  <div><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{rowsLoading ? "—" : fmtTL2(totGross)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>toplam brüt</div></div>
+                  <div><div style={{ fontSize: 14, fontWeight: 600, color: "#2EE06A" }}>{rowsLoading ? "—" : fmtTL2(totNet)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>çalışana net</div></div>
+                  <div><div style={{ fontSize: 14, fontWeight: 600, color: "#E0A82E" }}>{rowsLoading ? "—" : fmtTL2(totState)}</div><div style={{ fontSize: 9.5, color: "#7C7A75", marginTop: 2 }}>devlete giden</div></div>
+                </div>
+              </div>
+
+              {runErr && <div style={{ fontSize: 12, color: C.warnInk, background: C.warnBg, border: `0.5px solid ${C.warnBorder}`, borderRadius: 9, padding: "8px 12px", marginBottom: 11 }}>⚠ {runErr}</div>}
+
+              {rowsLoading ? (
+                <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+              ) : rows.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+                  <i className="ti ti-users" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bu şubede aktif personel yok.</span>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.9fr 1fr 1fr 0.95fr 36px", gap: 10, padding: "0 15px 7px", fontSize: 10, color: C.textHint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    <span>çalışan</span><span style={{ textAlign: "right" }}>brüt</span><span style={{ textAlign: "right" }}>net</span><span style={{ textAlign: "center" }}>durum</span><span></span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                    {rows.map((r) => {
+                      const p = r.payslip;
+                      const noSalary = r.base_salary == null;
+                      const initials = (r.first_name?.[0] || "") + (r.last_name?.[0] || "");
+                      return (
+                        <div key={r.employee_id} onClick={() => { if (p) setSlip({ row: r, p }); }} style={{ background: C.bg, border: p ? `0.5px solid ${C.border}` : `0.5px dashed #E0DACE`, borderRadius: 11, padding: "11px 15px", cursor: p ? "pointer" : "default", display: "grid", gridTemplateColumns: "1.9fr 1fr 1fr 0.95fr 36px", gap: 10, alignItems: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+                            <div style={{ width: 32, height: 32, borderRadius: "50%", background: p ? C.greenSoft : C.neutralBg, color: p ? C.greenDark : C.textFaint, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, flexShrink: 0 }}>{initials}</div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 12.5, fontWeight: 600, color: p ? C.ink : C.textMuted }}>{r.first_name} {r.last_name}</div>
+                              <div style={{ fontSize: 10.5, color: C.textFaint }}>{r.position || "—"}{p ? ` · ${p.sgk_days} gün` : ""}</div>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 12.5, textAlign: "right", color: p ? "#3C3A36" : "#C9C5BD" }}>{p ? fmtTL2(p.gross) : "—"}</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, textAlign: "right", color: p ? C.greenDark : "#C9C5BD" }}>{p ? fmtTL2(p.net_salary) : "—"}</div>
+                          <div style={{ textAlign: "center" }}>
+                            {p ? (
+                              <span style={{ fontSize: 10, color: C.greenDark, background: C.greenSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}><i className="ti ti-check" style={{ fontSize: 11 }} aria-hidden="true" />Hesaplandı</span>
+                            ) : noSalary ? (
+                              <span style={{ fontSize: 10, color: C.warnInk, background: C.warnBg, padding: "4px 10px", borderRadius: 12, fontWeight: 600 }}>Maaş Tanımsız</span>
+                            ) : (
+                              <span style={{ fontSize: 10, color: C.warnInk, background: C.warnBg, padding: "4px 10px", borderRadius: 12, fontWeight: 600 }}>Bekliyor</span>
+                            )}
+                          </div>
+                          {p ? (
+                            <i className="ti ti-chevron-right" style={{ fontSize: 15, color: "#D4D0C8", margin: "0 auto" }} aria-hidden="true" />
+                          ) : noSalary ? (
+                            <i className="ti ti-lock" style={{ fontSize: 14, color: C.textHint, margin: "0 auto" }} aria-hidden="true" />
+                          ) : (
+                            <button onClick={(e) => { e.stopPropagation(); runOne(r.employee_id); }} aria-label="Bordroyu çalıştır" style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: C.green, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}><i className="ti ti-player-play" style={{ fontSize: 13, color: "#fff" }} aria-hidden="true" /></button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* FIS MODALI */}
       {slip && (
         <Modal title={`${slip.row.first_name} ${slip.row.last_name} — ${AYLAR[slip.p.month - 1]} ${slip.p.year}`} onClose={() => setSlip(null)}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <span style={{ fontSize: 11.5, color: C.textFaint }}>{slip.row.position || "—"} · {slipContext}</span>
+            <span style={{ fontSize: 11.5, color: C.textFaint }}>{slip.row.position || "—"} · {selected?.name}</span>
             <span style={{ fontSize: 10.5, color: C.textFaint }}>SGK {slip.p.sgk_days} gün</span>
           </div>
+
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 10, borderBottom: "0.5px solid #F0EEE8" }}>
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>Brüt Ücret</span>
             <span style={{ fontSize: 13.5, fontWeight: 600 }}>{fmtTL2(slip.p.gross)}</span>
           </div>
+
           <div style={{ fontSize: 10, color: C.textHint, fontWeight: 600, margin: "11px 0 7px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Kesintiler</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: C.textMuted }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}><span>SGK İşçi Payı</span><span>− {fmtTL2(slip.p.sgk_employee)}</span></div>
@@ -1771,10 +1684,12 @@ function PayrollPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: {
             <div style={{ display: "flex", justifyContent: "space-between" }}><span>Gelir Vergisi <span style={{ color: "#C9C5BD" }}>istisna sonrası</span></span><span>− {fmtTL2(slip.p.income_tax_net)}</span></div>
             <div style={{ display: "flex", justifyContent: "space-between" }}><span>Damga Vergisi <span style={{ color: "#C9C5BD" }}>istisna sonrası</span></span><span>− {fmtTL2(slip.p.stamp_tax_net)}</span></div>
           </div>
+
           <div style={{ marginTop: 13, padding: "12px 15px", background: C.greenSoft, borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 12.5, fontWeight: 600, color: C.greenDark }}>NET MAAŞ</span>
             <span style={{ fontSize: 18, fontWeight: 600, color: C.greenDark }}>{fmtTL2(slip.p.net_salary)}</span>
           </div>
+
           <div style={{ marginTop: 9, padding: "11px 15px", background: C.surface, border: `0.5px solid ${C.border}`, borderRadius: 11 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: C.textMuted, marginBottom: 5 }}><span>SGK İşveren</span><span>{fmtTL2(slip.p.sgk_employer)}</span></div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: C.textMuted, marginBottom: 8 }}><span>İşsizlik İşveren</span><span>{fmtTL2(slip.p.unemployment_employer)}</span></div>
@@ -1783,9 +1698,10 @@ function PayrollPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: {
               <span style={{ fontSize: 13.5, fontWeight: 600 }}>{fmtTL2(slip.p.employer_cost)}</span>
             </div>
           </div>
+
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10, color: C.textHint }}>
             <span>Kümülatif matrah {fmtTL2(slip.p.cumulative_base_before)} → {fmtTL2(slip.p.cumulative_base_after)}</span>
-            {!readOnly && <span onClick={() => { runOneMerkez(slip.row.employee_id); setSlip(null); }} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", color: C.greenDark }}><i className="ti ti-rotate" style={{ fontSize: 11 }} aria-hidden="true" />Yeniden çalıştır</span>}
+            <span onClick={() => { runOne(slip.row.employee_id); setSlip(null); }} style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", color: C.greenDark }}><i className="ti ti-rotate" style={{ fontSize: 11 }} aria-hidden="true" />Yeniden çalıştır</span>
           </div>
         </Modal>
       )}
@@ -2034,32 +1950,20 @@ const SHIFT_META: Record<string, { label: string; dot: string; fg: string; bg: s
   leave:       { label: "İzinli",           dot: "#E0A82E", fg: "#9C8A4E", bg: "#FBF6E9" },
 };
 
-function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void; tab: "merkez" | "branches" | "franchise"; setTab: (t: "merkez" | "branches" | "franchise") => void }) {
+function StaffPage({ token, companyId, jumpBranch, clearJump }: { token: string; companyId: string; jumpBranch?: string | null; clearJump?: () => void }) {
   const headers = { Authorization: `Bearer ${token}` };
-
-  // Merkez
-  const [merkezEmps, setMerkezEmps] = useState<Employee[]>([]);
-  const [merkezLoading, setMerkezLoading] = useState(false);
-
-  // Subeler (markaya ait)
   const [branches, setBranches] = useState<StaffBranch[]>([]);
-  const [branchCounts, setBranchCounts] = useState<Record<string, number>>({});
-  const [branchesLoaded, setBranchesLoaded] = useState(false);
-  const [selBranch, setSelBranch] = useState<StaffBranch | null>(null);
-  const [branchEmps, setBranchEmps] = useState<Employee[]>([]);
-  const [branchEmpLoading, setBranchEmpLoading] = useState(false);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<StaffBranch | null>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [empLoading, setEmpLoading] = useState(false);
 
-  // Franchise
-  const [franchises, setFranchises] = useState<{ id: string; name: string }[]>([]);
-  const [franCounts, setFranCounts] = useState<Record<string, number>>({});
-  const [selFran, setSelFran] = useState<{ id: string; name: string } | null>(null);
-  const [franRoster, setFranRoster] = useState<any[]>([]);
-  const [franRosterLoading, setFranRosterLoading] = useState(false);
-
-  // Modallar (yalnizca Marka)
+  // ekleme modal
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "" });
   const [formErr, setFormErr] = useState("");
+  // detay modal
   const [detail, setDetail] = useState<Employee | null>(null);
   const [edit, setEdit] = useState({ first_name: "", last_name: "", phone: "", position: "", department: "", base_salary: "", bank_iban: "" });
   const [editing, setEditing] = useState(false);
@@ -2067,76 +1971,68 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
   const [termPw, setTermPw] = useState("");
   const [msg, setMsg] = useState("");
 
-  const canManage = tab === "merkez";
-
-  // ── Merkez ──
-  const loadMerkez = async () => {
-    setMerkezLoading(true);
-    try { const r = await axios.get(`${API_URL}/employees/merkez?t=${Date.now()}`, { headers }); setMerkezEmps(r.data); }
-    catch { setMerkezEmps([]); }
-    setMerkezLoading(false);
+  // helper: bir company'nin ilk branch'ini bul
+  const firstBranchOf = async (cid: string): Promise<{ id: string; name: string; address?: string } | null> => {
+    try {
+      const r = await axios.get(`${API_URL}/companies/${cid}/branches`, { headers });
+      return r.data.length ? r.data[0] : null;
+    } catch { return null; }
   };
-  useEffect(() => { if (tab === "merkez") loadMerkez(); /* eslint-disable-next-line */ }, [tab]);
 
-  // ── Subeler ──
   const loadBranches = async () => {
     const list: StaffBranch[] = [];
-    try { const r = await axios.get(`${API_URL}/companies/${companyId}/branches?t=${Date.now()}`, { headers }); r.data.forEach((b: any) => list.push({ id: b.id, name: b.name, address: b.address, kind: "brand" })); }
-    catch {}
+    // 1) kendi subeler
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/branches`, { headers });
+      r.data.forEach((b: any) => list.push({ id: b.id, name: b.name, address: b.address, kind: "brand" }));
+    } catch {}
+    // 2) franchise'lar (her biri ayri company → ilk branch'ini al)
+    try {
+      const r = await axios.get(`${API_URL}/oversight/subs`, { headers });
+      const fr = r.data.filter((s: any) => s.link_type === "franchise");
+      await Promise.all(fr.map(async (f: any) => {
+        const b = await firstBranchOf(f.id);
+        if (b) list.push({ id: b.id, name: f.name, address: b.address || f.address, kind: "franchise" });
+      }));
+    } catch {}
     setBranches(list);
+    // personel sayilari
     const c: Record<string, number> = {};
-    await Promise.all(list.map(async (b) => { try { const r = await axios.get(`${API_URL}/employees/branch/${b.id}?t=${Date.now()}`, { headers }); c[b.id] = r.data.length; } catch { c[b.id] = 0; } }));
-    setBranchCounts(c);
-    setBranchesLoaded(true);
+    await Promise.all(list.map(async (b) => {
+      try { const r = await axios.get(`${API_URL}/employees/branch/${b.id}`, { headers }); c[b.id] = r.data.length; }
+      catch { c[b.id] = 0; }
+    }));
+    setCounts(c);
+    setLoading(false);
   };
+
+  const loadEmployees = async (branchId: string) => {
+    setEmpLoading(true);
+    try { const r = await axios.get(`${API_URL}/employees/branch/${branchId}`, { headers }); setEmployees(r.data); }
+    catch { setEmployees([]); }
+    setEmpLoading(false);
+  };
+
   useEffect(() => { loadBranches(); /* eslint-disable-next-line */ }, [companyId]);
 
-  const loadBranchEmps = async (branchId: string) => {
-    setBranchEmpLoading(true);
-    try { const r = await axios.get(`${API_URL}/employees/branch/${branchId}?t=${Date.now()}`, { headers }); setBranchEmps(r.data); }
-    catch { setBranchEmps([]); }
-    setBranchEmpLoading(false);
-  };
-  const selectBranch = (b: StaffBranch) => { setSelBranch(b); loadBranchEmps(b.id); };
-
+  const selectBranch = (b: StaffBranch) => { setSelected(b); loadEmployees(b.id); };
   useEffect(() => {
-    if (jumpBranch && branchesLoaded && branches.length) {
-      setTab("branches");
+    if (jumpBranch && branches.length) {
       const t = branches.find((b) => b.id === jumpBranch);
-      if (t) selectBranch(t);
+      if (t) { setSelected(t); loadEmployees(t.id); }
       if (clearJump) clearJump();
     }
     /* eslint-disable-next-line */
-  }, [jumpBranch, branchesLoaded, branches.length]);
+  }, [jumpBranch, branches.length]);
 
-  // ── Franchise ──
-  const loadFranchises = async () => {
-    const list: { id: string; name: string }[] = [];
-    try {
-      const r = await axios.get(`${API_URL}/oversight/subs?t=${Date.now()}`, { headers });
-      r.data.filter((s: any) => s.link_type === "franchise").forEach((f: any) => list.push({ id: f.id, name: f.name }));
-    } catch {}
-    setFranchises(list);
-    const c: Record<string, number> = {};
-    await Promise.all(list.map(async (f) => { try { const r = await axios.get(`${API_URL}/employees/franchise-roster/${f.id}?t=${Date.now()}`, { headers }); c[f.id] = r.data.length; } catch { c[f.id] = 0; } }));
-    setFranCounts(c);
-  };
-  useEffect(() => { if (tab === "franchise") loadFranchises(); /* eslint-disable-next-line */ }, [tab]);
+  const totalStaff = Object.values(counts).reduce((a, b) => a + b, 0);
 
-  const loadFranRoster = async (subCompanyId: string) => {
-    setFranRosterLoading(true);
-    try { const r = await axios.get(`${API_URL}/employees/franchise-roster/${subCompanyId}?t=${Date.now()}`, { headers }); setFranRoster(r.data); }
-    catch { setFranRoster([]); }
-    setFranRosterLoading(false);
-  };
-  const selectFran = (f: { id: string; name: string }) => { setSelFran(f); loadFranRoster(f.id); };
-
-  // ── CRUD (merkez) ──
   const addEmployee = async () => {
     setFormErr("");
     if (!form.first_name || !form.last_name) { setFormErr("Ad ve soyad zorunlu."); return; }
+    if (!selected) return;
     try {
-      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId }; // branch_id YOK = merkez
+      const payload: any = { first_name: form.first_name, last_name: form.last_name, contract_type: form.contract_type, company_id: companyId, branch_id: selected.id };
       if (form.email) payload.email = form.email;
       if (form.phone) payload.phone = form.phone;
       if (form.position) payload.position = form.position;
@@ -2146,7 +2042,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
       await axios.post(`${API_URL}/employees`, payload, { headers });
       setShowForm(false);
       setForm({ first_name: "", last_name: "", email: "", phone: "", position: "", department: "", contract_type: "full_time", base_salary: "", bank_iban: "" });
-      loadMerkez();
+      loadEmployees(selected.id); loadBranches();
     } catch (e: any) {
       const d = e.response?.data?.detail;
       setFormErr(typeof d === "string" ? d : (Array.isArray(d) ? d.map((x: any) => x.msg).join(", ") : "Personel eklenemedi."));
@@ -2155,207 +2051,165 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
 
   const openDetail = (em: Employee) => {
     setDetail(em);
-    setEdit({ first_name: em.first_name || "", last_name: em.last_name || "", phone: em.phone || "", position: em.position || "", department: em.department || "", base_salary: em.base_salary != null ? String(em.base_salary) : "", bank_iban: em.bank_iban || "" });
+    setEdit({ first_name: em.first_name || "", last_name: em.last_name || "", phone: em.phone || "", position: em.position || "", department: em.department || "" });
     setEditing(false); setRemoveMode(false); setMsg("");
   };
   const saveEdit = async () => {
     setMsg("");
     try {
-      const epayload: any = { first_name: edit.first_name, last_name: edit.last_name, phone: edit.phone, position: edit.position, department: edit.department, bank_iban: (edit.bank_iban || "").trim() };
+      const epayload: any = { first_name: edit.first_name, last_name: edit.last_name, phone: edit.phone, position: edit.position, department: edit.department, bank_iban: edit.bank_iban.trim() };
       epayload.base_salary = edit.base_salary ? (parseFloat(edit.base_salary) || 0) : null;
-      await axios.put(`${API_URL}/employees/${detail!.id}`, epayload, { headers }); setEditing(false); loadMerkez(); setDetail({ ...detail!, ...epayload });
-    } catch (e: any) { setMsg(e.response?.data?.detail || "Güncellenemedi."); }
+      await axios.put(`${API_URL}/employees/${detail!.id}`, epayload, { headers }); setEditing(false); if (selected) loadEmployees(selected.id); setDetail({ ...detail!, ...epayload });
+    }
+    catch (e: any) { setMsg(e.response?.data?.detail || "Güncellenemedi."); }
   };
   const terminate = async () => {
     setMsg("");
     if (!termPw) { setMsg("Onaylamak için şifren zorunlu."); return; }
     try {
       await axios.delete(`${API_URL}/employees/${detail!.id}/terminate`, { headers, data: { admin_password: termPw } });
-      setDetail(null); setTermPw(""); loadMerkez();
+      setDetail(null); setTermPw(""); if (selected) loadEmployees(selected.id); loadBranches();
     } catch (e: any) {
       const d = e.response?.data?.detail;
       setMsg(typeof d === "string" ? d : (Array.isArray(d) ? d.map((x: any) => x.msg).join(", ") : "İşten çıkarılamadı."));
     }
   };
 
+  const isFranchise = selected?.kind === "franchise";
   const greenBtn = { fontSize: 12, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "6px 12px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 } as const;
   const softBtn = { fontSize: 12, fontWeight: 500, color: C.greenDark, background: C.greenSoft, border: "none", padding: "8px 12px", borderRadius: 8, cursor: "pointer" } as const;
   const inputStyle = { width: "100%", padding: "9px 11px", border: `1px solid ${C.border}`, borderRadius: 9, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" as const };
   const labelStyle = { fontSize: 11, fontWeight: 600, color: C.textFaint, display: "block", marginBottom: 5 };
 
-  // ── employee satiri (Marka & Subeler ortak; clickable) ──
-  const empRow = (em: Employee) => {
-    const sm = SHIFT_META[em.shift_status || "not_started"] || SHIFT_META.not_started;
-    const initials = (em.first_name?.[0] || "") + (em.last_name?.[0] || "");
-    return (
-      <div key={em.id} onClick={() => openDetail(em)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "#fff", flexShrink: 0 }}>{initials}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{em.first_name} {em.last_name}</div>
-          <div style={{ fontSize: 11, color: C.textFaint }}>{[em.position, em.department].filter(Boolean).join(" · ") || "—"}</div>
-        </div>
-        {em.base_salary != null && <span style={{ fontSize: 11.5, color: C.textMuted, flexShrink: 0 }}>₺{Number(em.base_salary).toLocaleString("tr-TR")}</span>}
-        <span style={{ fontSize: 10, color: sm.fg, background: sm.bg, padding: "3px 9px", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: sm.dot }} />{sm.label}</span>
-      </div>
-    );
-  };
+  const branchActive = employees.filter((e) => e.is_active).length;
 
   return (
     <>
-      {/* ===== MARKA ===== */}
-      {tab === "merkez" && (
-        <>
-          <div style={{ background: "#0A0A0A", borderRadius: 16, padding: "18px 20px", boxShadow: "0 4px 18px rgba(0,0,0,0.13)", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>Merkez personeli</div>
-              <div style={{ fontSize: 12.5, color: "#2EE06A", marginTop: 5 }}>Genel merkez kadrosu — şubeye bağlı olmayan, doğrudan markaya bağlı çalışanlar.</div>
-            </div>
-            <button style={{ fontSize: 13, fontWeight: 600, color: "#fff", background: C.green, border: "none", padding: "9px 16px", borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap" }} onClick={() => { setShowForm(true); setFormErr(""); }}><i className="ti ti-plus" style={{ fontSize: 16 }} aria-hidden="true" />Personel Ekle</button>
-          </div>
-          {merkezLoading ? (
-            <div style={{ fontSize: 12.5, color: C.textHint, padding: "30px 0", textAlign: "center" }}>Yükleniyor…</div>
-          ) : merkezEmps.length === 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "50px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
-              <i className="ti ti-user-plus" style={{ fontSize: 24 }} aria-hidden="true" /><span style={{ fontSize: 12.5, textAlign: "center", maxWidth: 340 }}>Henüz merkez personeli yok. "Personel Ekle" ile şubeye bağlı olmayan çalışan ekleyebilirsin.</span>
+      <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 3 }}>Personel</div>
+      <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20 }}>Tüm şubelerinin personeli. Bir şube seç, detayına in.</div>
+
+      {/* Ozet kartlar */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 5 }}>Toplam Personel</div>
+          <div style={{ fontSize: 21, fontWeight: 600 }}>{loading ? "—" : totalStaff}</div>
+        </div>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: C.textFaint, marginBottom: 5 }}>Şube Sayısı</div>
+          <div style={{ fontSize: 21, fontWeight: 600, color: C.greenDark }}>{loading ? "—" : branches.length}</div>
+        </div>
+        <div style={{ background: C.ink, borderRadius: 11, padding: "13px 15px" }}>
+          <div style={{ fontSize: 11, color: "#9DE8BE", marginBottom: 5 }}>Bugün mesaide</div>
+          <div style={{ fontSize: 21, fontWeight: 600, color: "#fff" }}>—</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 18 }}>
+        {/* SOL — sube filtresi */}
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Şubeler</div>
+          {loading ? (
+            <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
+          ) : branches.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+              <i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Henüz şube yok.</span>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{merkezEmps.map((em) => empRow(em))}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {branches.map((b) => {
+                const isSel = selected?.id === b.id;
+                const cnt = counts[b.id] ?? 0;
+                const fr = b.kind === "franchise";
+                return (
+                  <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <span style={{ fontSize: 13, fontWeight: isSel ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.name}</span>
+                      <span style={{ fontSize: 9, color: fr ? C.franchise : C.greenDark, background: fr ? C.franchiseSoft : C.greenSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{fr ? "Franchise" : "Markaya Ait"}</span>
+                    </div>
+                    <span style={{ fontSize: 12, color: isSel ? C.greenDark : C.textFaint, fontWeight: isSel ? 600 : 400, flexShrink: 0, marginLeft: 6 }}>{cnt}</span>
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </>
-      )}
+        </div>
 
-      {/* ===== SUBELER ===== */}
-      {tab === "branches" && (
-        <>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-            <div><div style={{ fontSize: 20, fontWeight: 700, color: C.ink }}>Şube personeli</div><div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 3 }}>Şube personelini şube yöneticisi yönetir. Marka panelinde izlenir.</div></div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.neutralBg, border: `0.5px solid ${C.border}`, color: C.textFaint, borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 500 }}><i className="ti ti-lock" style={{ fontSize: 15 }} aria-hidden="true" />Salt-okunur</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 18 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Şubeler</div>
-              {!branchesLoaded ? (
+        {/* SAG — secili sube personeli */}
+        <div>
+          {!selected ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}>
+              <i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" />
+              <span style={{ fontSize: 12.5 }}>Personeli görmek için bir şube seçin.</span>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.name} — Personel ({employees.length})</span>
+                {!isFranchise ? (
+                  <button style={greenBtn} onClick={() => { setShowForm(true); setFormErr(""); }}><i className="ti ti-plus" style={{ fontSize: 14 }} aria-hidden="true" />Personel Ekle</button>
+                ) : (
+                  <span style={{ fontSize: 10.5, color: C.franchise, background: C.franchiseSoft, padding: "4px 10px", borderRadius: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}><i className="ti ti-eye" style={{ fontSize: 13 }} aria-hidden="true" />Gözetim (salt okunur)</span>
+                )}
+              </div>
+
+              {/* durum lejant */}
+              <div style={{ display: "flex", gap: 14, marginBottom: 12, flexWrap: "wrap" }}>
+                {Object.values(SHIFT_META).map((m) => (
+                  <span key={m.label} style={{ fontSize: 10.5, color: C.textMuted, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.dot }} />{m.label}
+                  </span>
+                ))}
+              </div>
+
+              {empLoading ? (
                 <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-              ) : branches.length === 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-building-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Henüz şube yok.</span></div>
+              ) : employees.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}>
+                  <i className="ti ti-user-off" style={{ fontSize: 22 }} aria-hidden="true" />
+                  <span style={{ fontSize: 12.5 }}>Bu şubede henüz personel yok.</span>
+                </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {branches.map((b) => {
-                    const isSel = selBranch?.id === b.id;
-                    const cnt = branchCounts[b.id] ?? 0;
+                  {employees.map((em) => {
+                    const sm = SHIFT_META[em.shift_status || "not_started"] || SHIFT_META.not_started;
+                    const initials = (em.first_name?.[0] || "") + (em.last_name?.[0] || "");
                     return (
-                      <div key={b.id} onClick={() => selectBranch(b)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.green}` : `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: isSel ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.name}</span>
-                          <span style={{ fontSize: 9, color: C.greenDark, background: C.greenSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Markaya Ait</span>
+                      <div key={em.id} onClick={() => openDetail(em)} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 11 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.ink, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: "#fff", flexShrink: 0 }}>{initials}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{em.first_name} {em.last_name}</div>
+                          <div style={{ fontSize: 11, color: C.textFaint }}>{[em.position, em.department].filter(Boolean).join(" · ") || "—"}</div>
                         </div>
-                        <span style={{ fontSize: 12, color: isSel ? C.greenDark : C.textFaint, fontWeight: isSel ? 600 : 400, flexShrink: 0, marginLeft: 6 }}>{cnt}</span>
+                        {em.contract_type && <span style={{ fontSize: 10, color: C.textMuted, background: C.neutralBg, padding: "2px 8px", borderRadius: 10, flexShrink: 0 }}>{CONTRACT_LABEL[em.contract_type] || em.contract_type}</span>}
+                        <span style={{ fontSize: 10, color: sm.fg, background: sm.bg, padding: "3px 9px", borderRadius: 10, fontWeight: 600, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: sm.dot }} />{sm.label}</span>
                       </div>
                     );
                   })}
                 </div>
               )}
-            </div>
-            <div>
-              {!selBranch ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}><i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Personeli görmek için bir şube seçin.</span></div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{selBranch.name} — Personel ({branchEmps.length})</div>
-                  {branchEmpLoading ? (
-                    <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-                  ) : branchEmps.length === 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-user-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bu şubede personel yok.</span></div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{branchEmps.map((em) => empRow(em))}</div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </>
-      )}
+            </>
+          )}
+        </div>
+      </div>
 
-      {/* ===== FRANCHISE ===== */}
-      {tab === "franchise" && (
-        <>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-            <div><div style={{ fontSize: 20, fontWeight: 700, color: C.ink }}>Franchise personeli</div><div style={{ fontSize: 12.5, color: C.textMuted, marginTop: 3 }}>Ayrı işveren. Yalnızca isim ve pozisyon görünür.</div></div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: C.franchiseSoft, border: `0.5px solid ${C.franchiseSoft}`, color: C.franchise, borderRadius: 10, padding: "9px 14px", fontSize: 12.5, fontWeight: 500 }}><i className="ti ti-shield-lock" style={{ fontSize: 15 }} aria-hidden="true" />KVKK · salt-okunur</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr", gap: 18 }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Franchise'lar</div>
-              {franchises.length === 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-building-store" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Bağlı franchise yok.</span></div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {franchises.map((f) => {
-                    const isSel = selFran?.id === f.id;
-                    const cnt = franCounts[f.id] ?? 0;
-                    return (
-                      <div key={f.id} onClick={() => selectFran(f)} style={{ background: isSel ? C.bg : C.surface, border: isSel ? `1.5px solid ${C.franchise}` : `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: isSel ? 600 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
-                          <span style={{ fontSize: 9, color: C.franchise, background: C.franchiseSoft, padding: "2px 7px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Franchise</span>
-                        </div>
-                        <span style={{ fontSize: 12, color: isSel ? C.franchise : C.textFaint, fontWeight: isSel ? 600 : 400, flexShrink: 0, marginLeft: 6 }}>{cnt}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            <div>
-              {!selFran ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: "60px 0", color: C.textHint, border: `1px dashed ${C.border}`, borderRadius: 14 }}><i className="ti ti-arrow-left" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Roster için bir franchise seçin.</span></div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{selFran.name} — Personel ({franRoster.length})</div>
-                  {franRosterLoading ? (
-                    <div style={{ fontSize: 12.5, color: C.textHint, padding: "20px 0", textAlign: "center" }}>Yükleniyor…</div>
-                  ) : franRoster.length === 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "30px 0", color: C.textHint }}><i className="ti ti-user-off" style={{ fontSize: 22 }} aria-hidden="true" /><span style={{ fontSize: 12.5 }}>Personel yok.</span></div>
-                  ) : (
-                    <>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {franRoster.map((em, i) => {
-                          const initials = (em.first_name?.[0] || "") + (em.last_name?.[0] || "");
-                          return (
-                            <div key={i} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 11, padding: "12px 14px", display: "flex", alignItems: "center", gap: 11 }}>
-                              <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.franchiseSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 600, color: C.franchise, flexShrink: 0 }}>{initials}</div>
-                              <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{em.first_name} {em.last_name}</div><div style={{ fontSize: 11, color: C.textFaint }}>{em.position || "—"}</div></div>
-                              <span style={{ fontSize: 10, color: em.is_active ? C.greenDark : C.textHint, background: em.is_active ? C.greenSoft : C.neutralBg, padding: "3px 9px", borderRadius: 10, fontWeight: 600, flexShrink: 0 }}>{em.is_active ? "Aktif" : "Pasif"}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div style={{ marginTop: 14, background: C.warnBg, border: `1px solid ${C.warnBorder}`, borderRadius: 12, padding: "11px 14px", fontSize: 11.5, color: C.warnInk, display: "flex", gap: 8 }}>
-                        <i className="ti ti-shield-lock" style={{ fontSize: 15, marginTop: 1, flexShrink: 0 }} aria-hidden="true" /><span><b>KVKK koruması.</b> Franchise ayrı işverendir. Maaş, IBAN ve TC bilgisi markaya gösterilmez.</span>
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* ===== Modal: Personel Ekle (merkez) ===== */}
-      {showForm && (
-        <Modal title="Personel Ekle — Merkez" onClose={() => setShowForm(false)}>
+      {/* Modal: Personel Ekle */}
+      {showForm && selected && (
+        <Modal title={`Personel Ekle — ${selected.name}`} onClose={() => setShowForm(false)}>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
             <div style={{ flex: 1 }}><label style={labelStyle}>Ad *</label><input style={inputStyle} value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} /></div>
             <div style={{ flex: 1 }}><label style={labelStyle}>Soyad *</label><input style={inputStyle} value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} /></div>
           </div>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-            <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="Operasyon Müdürü" /></div>
-            <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Yönetim" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Pozisyon</label><input style={inputStyle} value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="Barista" /></div>
+            <div style={{ flex: 1 }}><label style={labelStyle}>Departman</label><input style={inputStyle} value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Servis" /></div>
           </div>
           <div style={{ marginBottom: 12 }}><label style={labelStyle}>Sözleşme Tipi</label>
             <select style={inputStyle} value={form.contract_type} onChange={(e) => setForm({ ...form, contract_type: e.target.value })}>
-              <option value="full_time">Tam Zamanlı</option><option value="part_time">Yarı Zamanlı</option><option value="seasonal">Sezonluk</option><option value="contract">Sözleşmeli</option>
+              <option value="full_time">Tam Zamanlı</option>
+              <option value="part_time">Yarı Zamanlı</option>
+              <option value="seasonal">Sezonluk</option>
+              <option value="contract">Sözleşmeli</option>
             </select>
           </div>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
@@ -2371,7 +2225,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
         </Modal>
       )}
 
-      {/* ===== Modal: Personel Detay (merkez=yonet / sube=oku) ===== */}
+      {/* Modal: Personel Detay */}
       {detail && (
         <Modal title="Personel Detayı" onClose={() => setDetail(null)}>
           {!editing ? (
@@ -2379,7 +2233,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
               <div><span style={{ fontSize: 11, color: C.textFaint }}>Ad Soyad</span><div style={{ fontSize: 14, fontWeight: 600 }}>{detail.first_name} {detail.last_name}</div></div>
               <div><span style={{ fontSize: 11, color: C.textFaint }}>Pozisyon / Departman</span><div style={{ fontSize: 14 }}>{[detail.position, detail.department].filter(Boolean).join(" · ") || "—"}</div></div>
               <div><span style={{ fontSize: 11, color: C.textFaint }}>İletişim</span><div style={{ fontSize: 14 }}>{detail.email || "—"}{detail.phone ? ` · ${detail.phone}` : ""}</div></div>
-              <div><span style={{ fontSize: 11, color: C.textFaint }}>Brüt Maaş</span><div style={{ fontSize: 14 }}>{detail.base_salary != null ? `₺${Number(detail.base_salary).toLocaleString("tr-TR")}` : "—"}</div></div>
+              <div><span style={{ fontSize: 11, color: C.textFaint }}>Sözleşme</span><div style={{ fontSize: 14 }}>{detail.contract_type ? (CONTRACT_LABEL[detail.contract_type] || detail.contract_type) : "—"}</div></div>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 }}>
@@ -2408,7 +2262,7 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
           )}
           {msg && <div style={{ fontSize: 12, color: C.dangerInk, marginBottom: 10 }}>⚠ {msg}</div>}
 
-          {canManage ? (
+          {!isFranchise && (
             <div style={{ display: "flex", gap: 8 }}>
               {!editing ? (
                 <>
@@ -2422,8 +2276,6 @@ function StaffPage({ token, companyId, jumpBranch, clearJump, tab, setTab }: { t
                 </>
               )}
             </div>
-          ) : (
-            <div style={{ fontSize: 11.5, color: C.textFaint, display: "flex", alignItems: "center", gap: 6 }}><i className="ti ti-lock" style={{ fontSize: 14 }} aria-hidden="true" />Salt-okunur — şube yöneticisi yönetir.</div>
           )}
         </Modal>
       )}

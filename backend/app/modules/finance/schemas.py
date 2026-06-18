@@ -11,6 +11,7 @@ from pydantic import BaseModel
 class FinanceCategoryCreateSchema(BaseModel):
     name: str
     kind: str  # "income" | "expense"
+    scope: Optional[str] = None  # "branch" | "brand"
 
 
 class FinanceCategoryResponseSchema(BaseModel):
@@ -18,6 +19,7 @@ class FinanceCategoryResponseSchema(BaseModel):
     company_id: str
     name: str
     kind: str
+    scope: Optional[str] = None
     is_active: bool
     created_at: datetime
     model_config = {"from_attributes": True}
