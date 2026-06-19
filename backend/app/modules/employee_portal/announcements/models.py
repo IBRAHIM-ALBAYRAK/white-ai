@@ -4,7 +4,7 @@ app/modules/employee_portal/announcements/models.py
 ================================================================================
 ANNOUNCEMENTS MODEL — Employee Portal
 ================================================================================
-
+ 
 WHAT THIS FILE DOES:
     Defines the database model for company/branch announcements — the internal
     news feed employees see in their portal. Managers post announcements; all

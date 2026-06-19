@@ -11,6 +11,7 @@ Key rules:
 """
 
 import uuid
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.modules.inventory.models import Category, Supplier, Product, StockMovement, MovementType
@@ -36,6 +37,18 @@ class InventoryService:
             select(Category).where(Category.branch_id == branch_id, Category.is_active == True)
         )
         return result.scalars().all()
+
+    async def delete_category(self, db: AsyncSession, category_id: str) -> None:
+        result = await db.execute(select(Category).where(Category.id == category_id))
+        category = result.scalar_one_or_none()
+        if category is None:
+            return
+        # bu kategoriye bagli urunlerin category_id'sini NULL yap (urun kaybolmasin)
+        prods = await db.execute(select(Product).where(Product.category_id == category_id))
+        for pr in prods.scalars().all():
+            pr.category_id = None
+        category.is_active = False
+        await db.flush()
 
     # ── Suppliers ────────────────────────────────────────────────────────────
 
@@ -152,3 +165,160 @@ class InventoryService:
 
 
 inventory_service = InventoryService()
+
+
+# ============================================================================
+# MERKEZ DEPO + SEVK servisi — WarehouseService
+# (inventory/service.py sonuna eklenecek; ayni dosyadaki import'lari kullanir
+#  ama ek modeller gerekiyor — router/service eklemesinde import satiri da eklenecek)
+# ============================================================================
+
+from app.modules.inventory.models import (
+    WarehouseStock, StockTransfer, TransferDirection, TransferStatus, DestKind,
+)
+from app.modules.company.models import Company, Branch
+from app.modules.inventory.schemas import (
+    WarehouseStockCreateSchema, WarehouseStockUpdateSchema, DispatchCreateSchema,
+)
+
+
+class WarehouseService:
+    # ── Merkez depo CRUD ─────────────────────────────────────────────────────
+    async def create_item(self, db: AsyncSession, company_id: str, data: WarehouseStockCreateSchema) -> WarehouseStock:
+        item = WarehouseStock(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            name=data.name,
+            unit=data.unit,
+            unit_cost=data.unit_cost,
+            dispatch_price=data.dispatch_price,
+            current_stock=data.current_stock,
+            min_stock_level=data.min_stock_level,
+        )
+        db.add(item)
+        await db.flush()
+        return item
+
+    async def list_items(self, db: AsyncSession, company_id: str) -> list[WarehouseStock]:
+        result = await db.execute(
+            select(WarehouseStock).where(
+                WarehouseStock.company_id == company_id,
+                WarehouseStock.is_active == True,
+            )
+        )
+        return result.scalars().all()
+
+    async def get_item(self, db: AsyncSession, item_id: str) -> WarehouseStock:
+        result = await db.execute(select(WarehouseStock).where(WarehouseStock.id == item_id))
+        item = result.scalar_one_or_none()
+        if not item:
+            raise NotFoundException("Merkez depo ürünü bulunamadı.")
+        return item
+
+    async def update_item(self, db: AsyncSession, item_id: str, data: WarehouseStockUpdateSchema) -> WarehouseStock:
+        item = await self.get_item(db, item_id)
+        for field, value in data.model_dump(exclude_unset=True).items():
+            setattr(item, field, value)
+        await db.flush()
+        return item
+
+    async def delete_item(self, db: AsyncSession, item_id: str) -> None:
+        item = await self.get_item(db, item_id)
+        item.is_active = False
+        await db.flush()
+
+    # ── Sevk (atomik) ────────────────────────────────────────────────────────
+    async def dispatch(
+        self, db: AsyncSession, company_id: str, requested_by: str, data: DispatchCreateSchema
+    ) -> StockTransfer:
+        """
+        Merkezden bir subeye sevk. ATOMIK:
+          1) Merkez stok yeterli mi kontrol
+          2) Hedef subeyi + sirketini coz, brand_owned/franchise belirle
+          3) Merkez stok dusur
+          4) Hedef subede ayni isimli Product'i artir (yoksa olustur)
+          5) StockTransfer kaydi (SHIPPED, bedel = qty * dispatch_price)
+        Hepsi tek transaction — caller commit eder.
+        """
+        if data.quantity <= 0:
+            raise BadRequestException("Sevk miktarı sıfırdan büyük olmalı.")
+
+        item = await self.get_item(db, data.warehouse_stock_id)
+        if item.company_id != company_id:
+            raise BadRequestException("Bu merkez depo ürünü markanıza ait değil.")
+        if item.current_stock < data.quantity:
+            raise BadRequestException(
+                f"Merkez depoda yeterli stok yok. Mevcut: {item.current_stock} {item.unit}, istenen: {data.quantity}."
+            )
+
+        # Hedef sube + sirketi
+        branch_res = await db.execute(select(Branch).where(Branch.id == data.dest_branch_id))
+        branch = branch_res.scalar_one_or_none()
+        if not branch:
+            raise NotFoundException("Hedef şube bulunamadı.")
+        dest_company_id = branch.company_id
+
+        # brand_owned mi franchise mi? Varis sirketi == marka ise kendi subesi.
+        dest_kind = DestKind.BRAND_OWNED if dest_company_id == company_id else DestKind.FRANCHISE
+
+        unit_price = item.dispatch_price or 0.0
+        total = round(unit_price * data.quantity, 2)
+
+        # 3) Merkez stok dusur
+        item.current_stock = item.current_stock - data.quantity
+
+        # 4) Hedef subede ayni isimli aktif Product var mi?
+        prod_res = await db.execute(
+            select(Product).where(
+                Product.branch_id == data.dest_branch_id,
+                Product.name == item.name,
+                Product.is_active == True,
+            )
+        )
+        product = prod_res.scalar_one_or_none()
+        if product:
+            product.current_stock = (product.current_stock or 0.0) + data.quantity
+        else:
+            product = Product(
+                id=str(uuid.uuid4()),
+                branch_id=data.dest_branch_id,
+                name=item.name,
+                unit=item.unit,
+                unit_cost=unit_price,             # sube icin maliyet = sevk fiyati
+                current_stock=data.quantity,
+                min_stock_level=0.0,
+            )
+            db.add(product)
+
+        # 5) Transfer kaydi
+        transfer = StockTransfer(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            warehouse_stock_id=item.id,
+            dest_branch_id=data.dest_branch_id,
+            dest_company_id=dest_company_id,
+            dest_kind=dest_kind,
+            direction=TransferDirection.PUSH,
+            quantity=data.quantity,
+            unit_price=unit_price,
+            total_amount=total,
+            status=TransferStatus.SHIPPED,
+            note=data.note,
+            requested_by=requested_by,
+            reviewed_by=requested_by,
+            shipped_at=datetime.now(timezone.utc),
+        )
+        db.add(transfer)
+        await db.flush()
+        return transfer
+
+    async def list_transfers(self, db: AsyncSession, company_id: str) -> list[StockTransfer]:
+        result = await db.execute(
+            select(StockTransfer)
+            .where(StockTransfer.company_id == company_id)
+            .order_by(StockTransfer.created_at.desc())
+        )
+        return result.scalars().all()
+
+
+warehouse_service = WarehouseService()

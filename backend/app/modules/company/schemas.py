@@ -33,6 +33,7 @@ class CompanyUpdateSchema(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    legal_type: Optional[str] = None
     is_active: Optional[bool] = None
 
 class CompanyResponseSchema(BaseModel):
@@ -41,9 +42,11 @@ class CompanyResponseSchema(BaseModel):
     email: str
     phone: Optional[str]
     address: Optional[str]
+    company_type: str
+    legal_type: str = "limited"
+    legal_name: Optional[str] = None
     is_active: bool
     created_at: datetime
-
     model_config = {"from_attributes": True}
 
 # --- Branch Schemas ---

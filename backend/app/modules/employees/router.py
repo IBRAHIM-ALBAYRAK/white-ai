@@ -1,54 +1,40 @@
 """
 app/modules/employees/router.py
 
-Defines the API endpoints for Employee management.
-All routes are protected — only authenticated users can access them.
+Employee (workforce profile) management. PII lives here: tc_no, sgk_no,
+bank_iban, salary. Role-based access:
+  - Writes (create/update/terminate/reactivate): superadmin, owner
+  - Reads  (list / get by employee_id): superadmin, owner, manager
+  - by-user/{user_id}: any logged-in user, but a non-admin may resolve ONLY
+    their own profile (ownership check) — this is what the Employee Portal uses.
+NOTE: tenant/branch scoping (manager limited to own branch) is a later fix (#5b).
 
-Employees are distinct from Users: a User is an auth identity (email + password
-+ role), while an Employee is a workforce profile (company_id, branch_id, salary,
-tc_no, sgk_no, bank_iban, …). An Employee MAY be linked to a User (user_id) so
-the person can log in to the Employee Portal, but it is not required.
-
-Termination is a soft action (is_active=False + termination_date) so historical
-records (timeclock, payroll) are preserved — never a hard delete.
-
-Endpoints:
-  POST   /employees                          — Create an employee (optionally with a login account)
-  GET    /employees/branch/{branch_id}       — List ACTIVE employees of a branch
-  GET    /employees/branch/{branch_id}/inactive — List terminated employees of a branch (rehire list)
-  GET    /employees/by-user/{user_id}        — Resolve the employee profile for a logged-in user
-  GET    /employees/{employee_id}            — Get a single employee
-  PUT    /employees/{employee_id}            — Update an employee profile
-  DELETE /employees/{employee_id}/terminate  — Terminate an employee (admin password)
-  PUT    /employees/{employee_id}/reactivate — Reactivate (rehire) a terminated employee
+Employees are distinct from Users: a User is an auth identity; an Employee is a
+workforce profile optionally linked to a User via user_id.
+Termination is soft (is_active=False + termination_date) to preserve history.
 """
 
-from fastapi import APIRouter, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.security import decode_token
-from app.core.exceptions import UnauthorizedException
+from app.core.deps import get_current_user, require_role, assert_branch_access, assert_employee_company_access, assert_employee_write_access
+from app.modules.auth.models import User, UserRole
 from app.modules.employees.schemas import (
     EmployeeCreateSchema, EmployeeUpdateSchema, EmployeeResponseSchema,
 )
 from app.modules.employees.service import employee_service
 
 router = APIRouter(tags=["Employees"])
-security = HTTPBearer()
+
+admin_write = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
+admin_read = require_role(UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
+ADMIN_ROLES = (UserRole.SUPERADMIN, UserRole.OWNER, UserRole.MANAGER)
 
 
 class TerminateSchema(BaseModel):
     """Body for admin-password-protected employee termination."""
     admin_password: str
-
-
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    payload = decode_token(credentials.credentials)
-    if not payload:
-        raise UnauthorizedException("Invalid or expired token.")
-    return payload
 
 
 # --- Create ---
@@ -57,8 +43,10 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 async def create_employee(
     data: EmployeeCreateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(admin_write),
 ):
+    if data.branch_id:
+        await assert_branch_access(db, current_user, data.branch_id)
     return await employee_service.create_employee(db, data)
 
 
@@ -68,8 +56,9 @@ async def create_employee(
 async def list_employees_by_branch(
     branch_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(admin_read),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await employee_service.get_employees_by_branch(db, branch_id)
 
 
@@ -77,8 +66,9 @@ async def list_employees_by_branch(
 async def list_inactive_employees_by_branch(
     branch_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(admin_read),
 ):
+    await assert_branch_access(db, current_user, branch_id)
     return await employee_service.get_inactive_by_branch(db, branch_id)
 
 
@@ -86,19 +76,76 @@ async def list_inactive_employees_by_branch(
 async def get_employee_by_user(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    # A non-admin may resolve ONLY their own profile; admins may resolve anyone's.
+    if current_user.role not in ADMIN_ROLES and current_user.id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own profile.",
+        )
     return await employee_service.get_by_user_id(db, user_id)
 
 
 # --- Single / update ---
 
+# ── Merkez (sube-siz) personel + Franchise roster (KVKK: hassas alanlar gizli) ──
+from sqlalchemy import select as _sa_select
+from app.modules.employees.models import Employee as _Emp
+from app.modules.company.models import OversightLink as _OvLink
+from app.modules.employees.schemas import FranchiseEmployeeSchema
+
+_owner_read = require_role(UserRole.SUPERADMIN, UserRole.OWNER)
+
+
+@router.get("/employees/merkez", response_model=list[EmployeeResponseSchema])
+async def list_merkez_employees(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(_owner_read),
+):
+    """Markanin sube-siz (branch_id IS NULL) kendi personeli. Owner tam yetki."""
+    rows = (await db.execute(
+        _sa_select(_Emp).where(
+            _Emp.company_id == current_user.company_id,
+            _Emp.branch_id.is_(None),
+            _Emp.is_active == True,
+        ).order_by(_Emp.first_name)
+    )).scalars().all()
+    return rows
+
+
+@router.get("/employees/franchise-roster/{sub_company_id}", response_model=list[FranchiseEmployeeSchema])
+async def franchise_roster(
+    sub_company_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(_owner_read),
+):
+    """Franchise personeli — SADECE isim/pozisyon/durum. Maas/IBAN/TC donmez (KVKK)."""
+    link = (await db.execute(
+        _sa_select(_OvLink).where(
+            _OvLink.brand_company_id == current_user.company_id,
+            _OvLink.sub_company_id == sub_company_id,
+            _OvLink.link_type == "franchise",
+        )
+    )).scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=403, detail="Bu franchise gozetim kapsaminizda degil.")
+    rows = (await db.execute(
+        _sa_select(_Emp).where(
+            _Emp.company_id == sub_company_id,
+            _Emp.is_active == True,
+        ).order_by(_Emp.first_name)
+    )).scalars().all()
+    return rows
+
+
 @router.get("/employees/{employee_id}", response_model=EmployeeResponseSchema)
 async def get_employee(
     employee_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(admin_read),
 ):
+    await assert_employee_company_access(db, current_user, employee_id)
     return await employee_service.get_employee(db, employee_id)
 
 
@@ -107,8 +154,9 @@ async def update_employee(
     employee_id: str,
     data: EmployeeUpdateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(admin_write),
 ):
+    await assert_employee_write_access(db, current_user, employee_id)
     return await employee_service.update_employee(db, employee_id, data)
 
 
@@ -119,13 +167,14 @@ async def terminate_employee(
     employee_id: str,
     data: TerminateSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(admin_write),
 ):
     """Terminate an employee (soft). Requires the acting admin's password."""
+    await assert_employee_write_access(db, current_user, employee_id)
     await employee_service.terminate_employee(
         db,
         employee_id=employee_id,
-        admin_id=current_user["sub"],
+        admin_id=current_user.id,
         admin_password=data.admin_password,
     )
     return {"message": "Employee terminated."}
@@ -135,7 +184,28 @@ async def terminate_employee(
 async def reactivate_employee(
     employee_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(admin_write),
 ):
     """Reactivate (rehire) a terminated employee."""
+    await assert_employee_write_access(db, current_user, employee_id)
     return await employee_service.reactivate_employee(db, employee_id)
+
+
+# --- Mevcut calisana giris hesabi ac (sonradan) ---
+class CreateAccountSchema(BaseModel):
+    email: EmailStr
+    password: str
+    role: str = "employee"
+
+
+@router.post("/employees/{employee_id}/create-account", response_model=EmployeeResponseSchema)
+async def create_account_for_employee(
+    employee_id: str,
+    data: CreateAccountSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(admin_write),
+):
+    await assert_employee_write_access(db, current_user, employee_id)
+    return await employee_service.create_account_for_employee(
+        db, employee_id, data.email, data.password, data.role
+    )

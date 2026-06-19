@@ -33,6 +33,7 @@ class ShiftUpdateSchema(BaseModel):
 
 class ShiftAssignSchema(BaseModel):
     employee_ids: list[str]
+    force: bool = False  # True ise 45 saat overtime kontrolu atlanir
 
 class AssignmentUpdateSchema(BaseModel):
     status: AssignmentStatus
@@ -60,4 +61,22 @@ class ShiftResponseSchema(BaseModel):
     created_at: datetime
     assignments: list[AssignmentResponseSchema] = []
 
+    model_config = {"from_attributes": True}
+
+
+class ShiftTemplateCreateSchema(BaseModel):
+    branch_id: str
+    name: str
+    start_label: str
+    end_label: str
+    color: str = "green"
+
+
+class ShiftTemplateResponseSchema(BaseModel):
+    id: str
+    branch_id: str
+    name: str
+    start_label: str
+    end_label: str
+    color: str
     model_config = {"from_attributes": True}

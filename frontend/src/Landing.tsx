@@ -3,9 +3,7 @@ import { useEffect } from "react";
 
 export default function Landing() {
   const navigate = useNavigate();
-
   useEffect(() => {
-    // Scroll reveal
     const reveals = document.querySelectorAll(".reveal");
     const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
@@ -19,379 +17,337 @@ export default function Landing() {
     return () => observer.disconnect();
   }, []);
 
+  const modules = [
+    { icon: "ti-calendar-stats", title: "Workforce", desc: "Drag-and-drop rosters, overtime alerts before they cost you, instant shift notifications.", status: "live", featured: true },
+    { icon: "ti-box-seam", title: "Inventory & Supply", desc: "Central warehouse to branch dispatch, recipe costing, reorder triggers before you run out.", status: "dev" },
+    { icon: "ti-fingerprint", title: "Time Clock", desc: "Biometric check-in with GPS verification — buddy-punching stops at the door.", status: "dev" },
+    { icon: "ti-receipt-2", title: "HR & Payroll", desc: "SGK, income tax, and stamp duty calculated to the kuruş. Compliant by default.", status: "soon" },
+    { icon: "ti-wallet", title: "Earned Wage Access", desc: "Staff draw earned pay before payday, manager-approved. Lower turnover, happier teams.", status: "soon" },
+    { icon: "ti-chart-dots-3", title: "AI Forecasting", desc: "Two years of sales, weather, and local events predict tomorrow's covers — and your roster.", status: "soon" },
+  ];
+
+  const steps = [
+    { n: "01", title: "Add your branches", desc: "Brand-owned and franchise locations in one list. Owners see everything, managers see their branch." },
+    { n: "02", title: "Add people and stock", desc: "Enter staff and salaries once. The labor-law engine handles SGK, tax, and payroll automatically." },
+    { n: "03", title: "Run it from one screen", desc: "Shifts, payroll, finance, income and expense — every branch, every team, one window." },
+  ];
+
   return (
     <>
       <style>{`
         .landing * { box-sizing: border-box; }
-        .landing { font-family: 'Inter', sans-serif; color: #0a0a0a; background: white; overflow-x: hidden; }
+        .landing { font-family: 'Inter', sans-serif; color: #0a0a0a; background: #fff; overflow-x: hidden; }
         .landing a { text-decoration: none; }
 
-        /* NAV */
-        .l-nav {
-          position: fixed; top: 0; left: 0; right: 0; z-index: 200;
-          display: flex; align-items: center; justify-content: space-between;
-          padding: 0 40px; height: 68px;
-          background: rgba(255,255,255,0.92); backdrop-filter: blur(16px);
-          border-bottom: 1px solid #e5e4e0;
-        }
-        .l-logo { font-family: 'Bricolage Grotesque', 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #0a0a0a; letter-spacing: -0.03em; }
-        .l-logo span { color: #00c853; }
-        .l-nav-links { display: flex; gap: 4px; }
-        .l-nav-links a { color: #5a5a54; font-size: 14px; padding: 8px 14px; border-radius: 8px; transition: background 0.2s, color 0.2s; }
-        .l-nav-links a:hover { background: #f2f1ee; color: #0a0a0a; }
-        .l-nav-right { display: flex; gap: 12px; align-items: center; }
-        .l-btn-ghost { color: #5a5a54; font-size: 14px; padding: 8px 16px; border-radius: 8px; transition: background 0.2s; cursor: pointer; background: none; border: none; font-family: inherit; }
-        .l-btn-ghost:hover { background: #f2f1ee; color: #0a0a0a; }
-        .l-btn-primary { background: #0a0a0a; color: white; font-size: 14px; font-weight: 500; padding: 10px 22px; border-radius: 10px; cursor: pointer; transition: opacity 0.2s, transform 0.2s; border: none; font-family: inherit; }
-        .l-btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
-
-        /* ANNOUNCEMENT */
-        .l-announce {
-          background: #0a0a0a; color: white; text-align: center;
-          padding: 10px 20px; font-size: 13px;
-          display: flex; align-items: center; justify-content: center; gap: 12px;
-          margin-top: 68px;
-        }
-        .l-announce a { color: #ffd600; font-weight: 500; cursor: pointer; }
-        .l-announce a:hover { text-decoration: underline; }
-
-        /* HERO */
-        .l-hero {
-          position: relative; min-height: calc(100vh - 100px);
-          display: flex; align-items: center; overflow: hidden; background: white;
+        /* ============ HERO ============ */
+        .l-hero-wrap {
+          position: relative; background: #070707; overflow: hidden;
+          border-radius: 0 0 28px 28px; min-height: 640px;
         }
         .l-hero-bg {
           position: absolute; inset: 0;
-          background: radial-gradient(ellipse 80% 60% at 70% 50%, rgba(0,200,83,0.08) 0%, transparent 60%),
-                      radial-gradient(ellipse 50% 80% at 90% 20%, rgba(255,214,0,0.06) 0%, transparent 50%);
-          pointer-events: none;
+          background: linear-gradient(120deg, #0a1f16 0%, #0f3324 52%, #0a0a0a 100%);
         }
-        .l-hero-inner {
-          display: grid; grid-template-columns: 1fr 1fr;
-          align-items: center; width: 100%; max-width: 1280px;
-          margin: 0 auto; padding: -100px 48px 80px; gap: 60px;
+        .l-hero-glow {
+          position: absolute; inset: 0;
+          background: radial-gradient(ellipse at 80% 42%, rgba(0,200,83,0.16), transparent 55%);
         }
-        .l-hero-tag {
-          display: inline-flex; align-items: center; gap: 10px;
-          background: #f2f1ee; border: 1px solid #e5e4e0; border-radius: 100px;
-          padding: 10px 20px 10px 12px; font-size: 15px; color: #3a3a34; font-weight: 500;
-          margin-bottom: 20px; margin-left: -80px;
-          animation: fadeInUp 0.6s ease both;
+        /* yuzen pill nav */
+        .l-pillnav {
+          position: relative; z-index: 10;
+          display: flex; justify-content: center; padding: 22px 0 0;
         }
-        .l-tag-dot { width: 20px; height: 20px; background: #00c853; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+        .l-pillnav-inner {
+          display: flex; align-items: center; gap: 24px;
+          background: rgba(18,18,18,0.55); backdrop-filter: blur(14px);
+          border: 1px solid rgba(255,255,255,0.1); border-radius: 100px;
+          padding: 10px 12px 10px 22px;
+        }
+        .l-pn-link { font-size: 13px; color: rgba(255,255,255,0.82); cursor: pointer; display: flex; align-items: center; gap: 4px; transition: color 0.2s; }
+        .l-pn-link:hover { color: #fff; }
+        .l-pn-logo { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+        .l-pn-logo-box { width: 27px; height: 27px; background: #0d0d0d; border: 1px solid rgba(255,255,255,0.15); border-radius: 7px; display: flex; align-items: center; justify-content: center; }
+        .l-pn-logo-text { font-family: 'Bricolage Grotesque', 'Syne', sans-serif; font-size: 15px; font-weight: 800; color: #fff; letter-spacing: -0.02em; }
+        .l-pn-logo-text span { color: #00c853; }
+        .l-pn-cta { font-size: 13px; color: #070707; background: #fff; padding: 9px 18px; border-radius: 100px; font-weight: 600; cursor: pointer; transition: transform 0.2s; border: none; font-family: inherit; }
+        .l-pn-cta:hover { transform: translateY(-1px); }
+
+        .l-hero-grid {
+          position: relative; z-index: 5;
+          display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: center;
+          padding: 50px 64px 0; max-width: 1280px; margin: 0 auto;
+        }
+        .l-hero-eyebrow {
+          display: inline-flex; align-items: center; gap: 7px;
+          font-size: 12px; color: rgba(255,255,255,0.85);
+          background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+          padding: 6px 14px; border-radius: 100px; margin-bottom: 22px;
+        }
+        .l-hero-dot { width: 6px; height: 6px; border-radius: 50%; background: #00c853; box-shadow: 0 0 8px #00c853; }
         .l-hero-title {
           font-family: 'Bricolage Grotesque', 'Syne', sans-serif;
-          margin-left: -80px;
-          font-size: clamp(44px, 5.5vw, 72px); font-weight: 800;
-          line-height: 1.0; letter-spacing: -0.035em; margin-bottom: 24px;
-          margin-left: -80px;
-          animation: fadeInUp 0.6s ease 0.1s both;
+          font-size: clamp(38px, 5vw, 56px); line-height: 1.04; font-weight: 800;
+          color: #fff; letter-spacing: -0.035em; margin: 0 0 22px;
         }
-        .l-highlight { color: #00c853; position: relative; display: inline-block; }
-        .l-hero-desc {
-          font-size: 18px; color: #5a5a54; font-weight: 300;
-          line-height: 1.7; max-width: 480px; margin-bottom: 40px;
-          margin-left: -80px;
-          animation: fadeInUp 0.6s ease 0.2s both;
-        }
-        .l-hero-actions { 
-          display: flex; align-items: center; gap: 16px; flex-wrap: wrap; 
-          margin-left: -80px;
-}
+        .l-hero-title .hl { color: #00c853; }
+        .l-hero-desc { font-size: 15.5px; line-height: 1.6; color: rgba(255,255,255,0.7); margin: 0 0 28px; max-width: 420px; }
+        .l-hero-actions { display: flex; gap: 12px; }
         .l-btn-hero-primary {
-          background: #0a0a0a; color: white; font-size: 15px; font-weight: 500;
-          padding: 14px 32px; border-radius: 12px; display: inline-flex; align-items: center; gap: 8px;
-          transition: transform 0.2s, opacity 0.2s; cursor: pointer; border: none; font-family: inherit;
+          font-size: 14px; font-weight: 600; color: #070707; background: #00c853;
+          padding: 14px 28px; border-radius: 100px; cursor: pointer; border: none; font-family: inherit;
+          box-shadow: 0 6px 22px rgba(0,200,83,0.3); transition: transform 0.2s;
         }
-        .l-btn-hero-primary:hover { transform: translateY(-2px); opacity: 0.88; }
+        .l-btn-hero-primary:hover { transform: translateY(-2px); }
         .l-btn-hero-secondary {
-          background: #f2f1ee; color: #0a0a0a; font-size: 15px; font-weight: 500;
-          padding: 14px 28px; border-radius: 12px; display: inline-flex; align-items: center; gap: 8px;
-          border: 1px solid #e5e4e0; transition: background 0.2s, transform 0.2s; cursor: pointer; font-family: inherit;
+          font-size: 14px; font-weight: 500; color: #fff; background: rgba(255,255,255,0.08);
+          border: 1px solid rgba(255,255,255,0.18); padding: 14px 26px; border-radius: 100px;
+          cursor: pointer; font-family: inherit; transition: background 0.2s;
         }
-        .l-btn-hero-secondary:hover { background: #e5e4e0; transform: translateY(-2px); }
-        .l-hero-bullets { 
-          display: flex; flex-direction: column; gap: 10px; margin-top: 36px; 
-          margin-left: -80px;
-          animation: fadeInUp 0.6s ease 0.4s both; 
+        .l-btn-hero-secondary:hover { background: rgba(255,255,255,0.14); }
+
+        /* dashboard mockup */
+        .l-mockup {
+          background: #fff; border-radius: 16px; padding: 16px;
+          box-shadow: 0 30px 70px rgba(0,0,0,0.45);
+          transform: perspective(1200px) rotateY(-9deg) rotateX(3deg);
+          transition: transform 0.5s ease;
         }
-        .l-bullet { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #5a5a54; }
-        .l-bullet-check { width: 20px; height: 20px; background: rgba(0,200,83,0.12); color: #00c853; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+        .l-mockup:hover { transform: perspective(1200px) rotateY(-4deg) rotateX(1deg); }
+        .l-mockup-dots { display: flex; gap: 5px; margin-bottom: 14px; }
+        .l-mockup-dots span { width: 9px; height: 9px; border-radius: 50%; }
+        .l-mock-hero { background: #0A0A0A; border-radius: 11px; padding: 13px 15px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .l-mock-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .l-mock-stat { flex: 1; background: #F2F1ED; border-radius: 9px; padding: 11px; }
+        .l-mock-shift { background: #EEF8F2; border-radius: 9px; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
 
-        /* HERO RIGHT */
-        .l-hero-right { position: relative; height: 560px; animation: fadeInRight 0.8s ease 0.3s both; }
-        .l-hero-img { position: absolute; inset: 0; border-radius: 24px; overflow: hidden; background: linear-gradient(135deg, #e8f5e9 0%, #f3e5f5 50%, #e3f2fd 100%); }
-        .l-person-svg { position: absolute; bottom: 0; right: 10%; width: 75%; height: 95%; }
+        .l-hero-trust {
+          position: relative; z-index: 5;
+          display: flex; align-items: center; gap: 22px;
+          padding: 36px 64px 30px; max-width: 1280px; margin: 0 auto; flex-wrap: wrap;
+        }
+        .l-trust-label { font-size: 12px; color: #fff; font-weight: 700; line-height: 1.35; }
+        .l-trust-div { width: 1px; height: 32px; background: rgba(255,255,255,0.18); }
+        .l-trust-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: rgba(255,255,255,0.72); }
 
-        /* FLOATING CARDS */
-        .l-fc { position: absolute; background: white; border-radius: 16px; padding: 16px 20px; box-shadow: 0 8px 40px rgba(0,0,0,0.12); z-index: 10; }
-        .l-fc-1 { top: 60px; left: -20px; min-width: 220px; animation: float 4s ease-in-out infinite; }
-        .l-fc-2 { bottom: 100px; left: -30px; min-width: 200px; animation: float 4s ease-in-out 1.5s infinite; }
-        .l-fc-3 { top: 180px; right: -10px; min-width: 180px; animation: float 4s ease-in-out 0.8s infinite; }
-        @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-        .l-fc-label { font-size: 11px; color: #9b9b93; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
-        .l-fc-value { font-family: 'Bricolage Grotesque', sans-serif; font-size: 22px; font-weight: 800; color: #0a0a0a; letter-spacing: -0.02em; }
-        .l-fc-green { color: #00c853; }
-        .l-fc-sub { font-size: 12px; color: #9b9b93; margin-top: 2px; }
-        .l-shift-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-        .l-shift-item { display: flex; align-items: center; justify-content: space-between; font-size: 12px; padding: 6px 10px; background: #f2f1ee; border-radius: 8px; }
-        .l-badge { font-size: 10px; padding: 2px 8px; border-radius: 100px; font-weight: 600; }
-        .l-badge-green { background: rgba(0,200,83,0.12); color: #00a843; }
-        .l-badge-yellow { background: rgba(255,214,0,0.2); color: #b38600; }
-        .l-fc-row { display: flex; align-items: center; gap: 10px; }
-        .l-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; color: white; font-weight: 700; }
+        /* ============ STATS ============ */
+        .l-stats { background: #070707; padding: 30px 64px; display: flex; align-items: center; justify-content: space-around; gap: 20px; flex-wrap: wrap; }
+        .l-stat { text-align: center; }
+        .l-stat-num { font-family: 'Bricolage Grotesque','Syne',sans-serif; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+        .l-stat-label { font-size: 10.5px; color: rgba(255,255,255,0.5); margin-top: 4px; }
+        .l-stat-div { width: 1px; height: 38px; background: rgba(255,255,255,0.1); }
 
-        /* TRUSTED */
-        .l-trusted { border-top: 1px solid #e5e4e0; border-bottom: 1px solid #e5e4e0; padding: 32px 48px; display: flex; align-items: center; gap: 48px; overflow: hidden; }
-        .l-trusted-label { font-size: 13px; color: #9b9b93; white-space: nowrap; }
-        .l-logos { display: flex; gap: 48px; align-items: center; animation: scrollLogos 20s linear infinite; }
-        .l-logo-item { font-family: 'Bricolage Grotesque', sans-serif; font-size: 16px; font-weight: 700; color: #9b9b93; white-space: nowrap; }
-        @keyframes scrollLogos { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        /* ============ SECTIONS ============ */
+        .l-section { padding: 72px 64px; max-width: 1280px; margin: 0 auto; }
+        .l-eyebrow { display: inline-block; font-size: 11px; font-weight: 600; color: #00a843; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 14px; }
+        .l-h2 { font-family: 'Bricolage Grotesque','Syne',sans-serif; font-size: clamp(30px, 4vw, 42px); font-weight: 800; letter-spacing: -0.035em; line-height: 1.06; margin: 0 0 14px; color: #0a0a0a; }
+        .l-lead { font-size: 15.5px; color: #62615c; line-height: 1.6; font-weight: 300; max-width: 540px; margin: 0; }
 
-        /* MODULES */
-        .l-modules { padding: 100px 48px; max-width: 1280px; margin: 0 auto; }
-        .l-section-header { text-align: center; margin-bottom: 64px; }
-        .l-section-tag { display: inline-flex; align-items: center; gap: 6px; background: rgba(0,200,83,0.1); color: #00a843; border-radius: 100px; padding: 5px 14px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 16px; }
-        .l-section-title { font-family: 'Bricolage Grotesque', sans-serif; font-size: clamp(32px, 4vw, 52px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; margin-bottom: 16px; }
-        .l-section-desc { font-size: 17px; color: #5a5a54; max-width: 520px; margin: 0 auto; font-weight: 300; }
-        .l-modules-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-        .l-module-card { border: 1px solid #e5e4e0; border-radius: 20px; padding: 32px; background: white; transition: transform 0.3s, box-shadow 0.3s; }
-        .l-module-card:hover { transform: translateY(-4px); box-shadow: 0 20px 60px rgba(0,0,0,0.08); }
-        .l-module-card.featured { background: #0a0a0a; color: white; border-color: #0a0a0a; }
-        .l-module-card.featured .l-module-desc { color: rgba(255,255,255,0.55); }
-        .l-module-icon { width: 48px; height: 48px; border-radius: 14px; background: #f2f1ee; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 20px; }
-        .l-module-card.featured .l-module-icon { background: rgba(255,255,255,0.12); }
-        .l-module-title { font-family: 'Bricolage Grotesque', sans-serif; font-size: 18px; font-weight: 700; margin-bottom: 10px; letter-spacing: -0.01em; }
-        .l-module-desc { font-size: 14px; color: #5a5a54; line-height: 1.6; font-weight: 300; margin-bottom: 20px; }
-        .l-status { font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 100px; display: inline-block; }
-        .l-status-live { background: rgba(0,200,83,0.1); color: #00a843; }
-        .l-status-dev { background: rgba(255,214,0,0.15); color: #b38600; }
-        .l-status-soon { background: #f2f1ee; color: #5a5a54; }
+        /* modules */
+        .l-modules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 40px; }
+        .l-mod { background: #FBFBFA; border: 0.5px solid #ECECE8; border-radius: 16px; padding: 24px; transition: transform 0.25s, box-shadow 0.25s; }
+        .l-mod:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.06); }
+        .l-mod.featured { background: linear-gradient(140deg, #0a1f16, #0f3324); color: #fff; }
+        .l-mod-icon { width: 42px; height: 42px; border-radius: 12px; background: #F2F1ED; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+        .l-mod.featured .l-mod-icon { background: rgba(0,200,83,0.16); }
+        .l-mod-title { font-size: 16px; font-weight: 700; margin-bottom: 7px; }
+        .l-mod-desc { font-size: 12.5px; line-height: 1.55; color: #6B6862; margin-bottom: 16px; }
+        .l-mod.featured .l-mod-desc { color: rgba(255,255,255,0.7); }
+        .l-status { font-size: 9.5px; padding: 3px 11px; border-radius: 100px; font-weight: 600; }
+        .l-status-live { color: #070707; background: #00c853; }
+        .l-status-dev { color: #C68A12; background: #FEF6E7; }
+        .l-status-soon { color: #8A867F; background: #F2F1ED; }
 
-        /* QUOTE */
-        .l-quote { padding: 80px 48px; text-align: center; border-top: 1px solid #e5e4e0; }
-        .l-quote-text { font-family: 'Bricolage Grotesque', sans-serif; font-size: clamp(24px, 3vw, 40px); font-weight: 700; letter-spacing: -0.025em; line-height: 1.25; max-width: 800px; margin: 0 auto 24px; }
-        .l-quote-text em { font-style: normal; color: #00c853; }
-        .l-quote-attr { font-size: 14px; color: #9b9b93; }
+        /* how */
+        .l-how { background: #F7F8FA; }
+        .l-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
+        .l-step { background: #fff; border: 0.5px solid #ECECE8; border-radius: 15px; padding: 28px; }
+        .l-step-n { font-size: 11px; font-weight: 700; color: #00a843; letter-spacing: 0.08em; margin-bottom: 14px; }
+        .l-step-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: #0a0a0a; }
+        .l-step-desc { font-size: 12.5px; color: #6B6862; line-height: 1.6; }
 
-        /* CTA */
-        .l-cta { background: #0a0a0a; padding: 100px 48px; text-align: center; position: relative; overflow: hidden; }
-        .l-cta-glow { position: absolute; top: -200px; left: 50%; transform: translateX(-50%); width: 600px; height: 600px; background: radial-gradient(circle, rgba(0,200,83,0.15) 0%, transparent 70%); pointer-events: none; }
-        .l-cta-title { font-family: 'Bricolage Grotesque', sans-serif; font-size: clamp(36px, 5vw, 64px); font-weight: 800; letter-spacing: -0.03em; color: white; margin-bottom: 20px; position: relative; }
-        .l-cta-title em { font-style: normal; color: #00c853; }
-        .l-cta-desc { font-size: 17px; color: rgba(255,255,255,0.5); max-width: 480px; margin: 0 auto 40px; font-weight: 300; }
-        .l-cta-actions { display: flex; align-items: center; justify-content: center; gap: 16px; }
-        .l-btn-cta-primary { background: #00c853; color: white; font-size: 15px; font-weight: 600; padding: 16px 40px; border-radius: 12px; cursor: pointer; border: none; font-family: inherit; transition: opacity 0.2s, transform 0.2s; }
-        .l-btn-cta-primary:hover { opacity: 0.88; transform: translateY(-2px); }
-        .l-btn-cta-ghost { color: rgba(255,255,255,0.6); font-size: 14px; padding: 16px 24px; border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; background: none; cursor: pointer; font-family: inherit; transition: all 0.2s; }
-        .l-btn-cta-ghost:hover { background: rgba(255,255,255,0.08); color: white; }
+        /* quote */
+        .l-quote { background: #070707; text-align: center; padding: 76px 48px; }
+        .l-quote-stars { font-size: 13px; color: #00c853; letter-spacing: 0.1em; margin-bottom: 20px; }
+        .l-quote-text { font-family: 'Bricolage Grotesque','Syne',sans-serif; font-size: clamp(22px, 3.2vw, 32px); font-weight: 700; color: #fff; line-height: 1.32; letter-spacing: -0.025em; margin: 0 auto 20px; max-width: 720px; }
+        .l-quote-text em { color: #00c853; font-style: italic; }
+        .l-quote-attr { font-size: 12.5px; color: rgba(255,255,255,0.5); }
 
-        /* FOOTER */
-        .l-footer { border-top: 1px solid #e5e4e0; padding: 48px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px; }
-        .l-footer-logo { font-family: 'Bricolage Grotesque', sans-serif; font-size: 18px; font-weight: 800; color: #0a0a0a; letter-spacing: -0.02em; }
+        /* cta */
+        .l-cta { position: relative; overflow: hidden; background: linear-gradient(135deg, #0a1f16, #0f3324); text-align: center; padding: 72px 48px; }
+        .l-cta-glow { position: absolute; inset: 0; background: radial-gradient(circle at 50% 0%, rgba(0,200,83,0.2), transparent 58%); }
+        .l-cta-inner { position: relative; }
+        .l-cta-title { font-family: 'Bricolage Grotesque','Syne',sans-serif; font-size: clamp(28px, 4vw, 40px); font-weight: 800; color: #fff; letter-spacing: -0.035em; line-height: 1.08; margin: 0 0 14px; }
+        .l-cta-title em { color: #00c853; font-style: italic; }
+        .l-cta-desc { font-size: 14.5px; color: rgba(255,255,255,0.7); margin: 0 auto 28px; max-width: 470px; }
+        .l-cta-actions { display: flex; gap: 12px; justify-content: center; }
+
+        /* footer */
+        .l-footer { background: #070707; border-top: 1px solid rgba(255,255,255,0.06); padding: 30px 64px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+        .l-footer-logo { font-family: 'Bricolage Grotesque','Syne',sans-serif; font-size: 15px; font-weight: 800; color: #fff; }
         .l-footer-logo span { color: #00c853; }
-        .l-footer-copy { font-size: 13px; color: #9b9b93; }
-        .l-footer-links { display: flex; gap: 24px; }
-        .l-footer-links a { font-size: 13px; color: #9b9b93; transition: color 0.2s; }
-        .l-footer-links a:hover { color: #0a0a0a; }
+        .l-footer-copy { font-size: 11px; color: rgba(255,255,255,0.4); }
+        .l-footer-links { display: flex; gap: 18px; }
+        .l-footer-links a { font-size: 11.5px; color: rgba(255,255,255,0.55); cursor: pointer; }
+        .l-footer-links a:hover { color: #fff; }
 
-        /* ANIMATIONS */
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes fadeInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
-        .reveal { opacity: 0; transform: translateY(28px); transition: opacity 0.7s ease, transform 0.7s ease; }
-        .reveal.visible { opacity: 1; transform: translateY(0); }
-        .reveal-d1 { transition-delay: 0.1s; }
-        .reveal-d2 { transition-delay: 0.2s; }
+        /* reveal */
+        .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.7s ease, transform 0.7s ease; }
+        .reveal.visible { opacity: 1; transform: none; }
+        .reveal-d1 { transition-delay: 0.08s; }
+        .reveal-d2 { transition-delay: 0.16s; }
+
+        @media (max-width: 900px) {
+          .l-hero-grid { grid-template-columns: 1fr; padding: 40px 28px 0; }
+          .l-mockup { display: none; }
+          .l-modules, .l-steps { grid-template-columns: 1fr; }
+          .l-section, .l-stats, .l-footer, .l-hero-trust { padding-left: 28px; padding-right: 28px; }
+          .l-pillnav-inner { gap: 12px; padding: 9px 10px 9px 16px; flex-wrap: wrap; }
+        }
       `}</style>
 
-      <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
-
       <div className="landing">
-        {/* NAV */}
-        <nav className="l-nav">
-          <div className="l-logo">WHITE<span>.</span>AI</div>
-          <div className="l-nav-links">
-            <a href="#modules">Platform</a>
-            <a href="#features">Features</a>
-          </div>
-          <div className="l-nav-right">
-            <button className="l-btn-ghost" onClick={() => navigate("/app")}>Log In</button>
-            <button className="l-btn-primary" onClick={() => navigate("/app")}>Book a Demo</button>
-          </div>
-        </nav>
+        {/* ============ HERO ============ */}
+        <div className="l-hero-wrap">
+          <div className="l-hero-bg" />
+          <div className="l-hero-glow" />
 
-        {/* ANNOUNCEMENT */}
-        <div className="l-announce">
-        ✦ Run every team. Every branch. Every operation.
-          <a onClick={() => navigate("/app")}>Get early access →</a>
-        </div>
+          {/* pill nav */}
+          <nav className="l-pillnav">
+            <div className="l-pillnav-inner">
+              <span className="l-pn-link">Çözümler <i className="ti ti-chevron-down" style={{ fontSize: 11 }} /></span>
+              <span className="l-pn-link">Keşfet <i className="ti ti-chevron-down" style={{ fontSize: 11 }} /></span>
+              <span className="l-pn-link">Fiyatlandırma</span>
+              <span className="l-pn-logo">
+                <span className="l-pn-logo-box"><i className="ti ti-sparkles" style={{ fontSize: 14, color: "#00c853" }} /></span>
+                <span className="l-pn-logo-text">WHITE<span>.AI</span></span>
+              </span>
+              <span className="l-pn-link">Destek</span>
+              <span className="l-pn-link">İletişim</span>
+              <button className="l-pn-cta" onClick={() => navigate("/app")}>Demo Talep Et</button>
+            </div>
+          </nav>
 
-        {/* HERO */}
-        <section className="l-hero">
-          <div className="l-hero-bg"></div>
-          <div className="l-hero-inner">
+          {/* hero grid */}
+          <div className="l-hero-grid">
             <div>
-              <div className="l-hero-tag">
-                <div className="l-tag-dot">✦</div>
-                AI-Powered Operating System for Businesses That Run on People.
-              </div>
-              <h1 className="l-hero-title">
-                Smarter shifts.<br/>
-                Leaner costs.<br/>
-                <span className="l-highlight">Powered by AI.</span>
-              </h1>
-              <p className="l-hero-desc">
-                From first hire to final pay — WHITE.AI unifies workforce, inventory, and analytics for restaurants and hospitality chains across Türkiye.
-              </p>
+              <div className="l-hero-eyebrow"><span className="l-hero-dot" />Çok şubeli hospitality için işletim sistemi</div>
+              <h1 className="l-hero-title">Her şubeyi<br /><span className="hl">en iyi şuben</span><br />gibi yönet.</h1>
+              <p className="l-hero-desc">Vardiya, bordro, envanter ve finans — restoran ve kafe zincirleri için tek sistemde, ilk günden SGK uyumlu.</p>
               <div className="l-hero-actions">
-                <button className="l-btn-hero-primary" onClick={() => navigate("/app")}>
-                  Book a Demo →
-                </button>
-                <button className="l-btn-hero-secondary" onClick={() => document.getElementById("modules")?.scrollIntoView({behavior:"smooth"})}>
-                  See how it works
-                </button>
-              </div>
-              <div className="l-hero-bullets">
-                <div className="l-bullet"><div className="l-bullet-check">✓</div> SGK & Turkish labor law compliance built-in</div>
-                <div className="l-bullet"><div className="l-bullet-check">✓</div> Multi-branch from day one — 1 or 50 locations</div>
-                <div className="l-bullet"><div className="l-bullet-check">✓</div> AI forecasting for staffing and inventory</div>
+                <button className="l-btn-hero-primary" onClick={() => navigate("/app")}>Demo Talep Et →</button>
+                <button className="l-btn-hero-secondary" onClick={() => document.getElementById("modules")?.scrollIntoView({ behavior: "smooth" })}>Nasıl çalışır?</button>
               </div>
             </div>
 
-            {/* HERO VISUAL */}
-            <div className="l-hero-right">
-              <div className="l-hero-img">
-                <svg className="l-person-svg" viewBox="0 0 400 500" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <ellipse cx="200" cy="480" rx="120" ry="30" fill="rgba(0,0,0,0.06)"/>
-                  <rect x="155" y="320" width="40" height="160" rx="20" fill="#1a1a2e"/>
-                  <rect x="205" y="320" width="40" height="160" rx="20" fill="#16213e"/>
-                  <ellipse cx="175" cy="480" rx="28" ry="10" fill="#0a0a0a"/>
-                  <ellipse cx="225" cy="480" rx="28" ry="10" fill="#0a0a0a"/>
-                  <rect x="130" y="180" width="140" height="160" rx="20" fill="white"/>
-                  <rect x="190" y="190" width="20" height="140" rx="4" fill="#f0f0f0"/>
-                  <circle cx="200" cy="210" r="5" fill="#e0e0e0"/>
-                  <circle cx="200" cy="230" r="5" fill="#e0e0e0"/>
-                  <circle cx="200" cy="250" r="5" fill="#e0e0e0"/>
-                  <rect x="85" y="185" width="50" height="120" rx="25" fill="#f5c5a3"/>
-                  <rect x="265" y="185" width="50" height="100" rx="25" fill="#f5c5a3"/>
-                  <rect x="260" y="265" width="70" height="50" rx="10" fill="#333"/>
-                  <rect x="263" y="268" width="64" height="44" rx="8" fill="#4a90e2"/>
-                  <rect x="268" y="273" width="54" height="6" rx="3" fill="rgba(255,255,255,0.7)"/>
-                  <rect x="268" y="283" width="40" height="4" rx="2" fill="rgba(255,255,255,0.4)"/>
-                  <rect x="268" y="291" width="48" height="4" rx="2" fill="rgba(255,255,255,0.4)"/>
-                  <rect x="268" y="299" width="35" height="4" rx="2" fill="rgba(255,255,255,0.4)"/>
-                  <rect x="183" y="155" width="34" height="35" rx="8" fill="#f5c5a3"/>
-                  <ellipse cx="200" cy="130" rx="52" ry="58" fill="#f5c5a3"/>
-                  <ellipse cx="200" cy="88" rx="52" ry="22" fill="#2c1810"/>
-                  <rect x="148" y="88" width="20" height="30" rx="10" fill="#2c1810"/>
-                  <rect x="232" y="88" width="20" height="30" rx="10" fill="#2c1810"/>
-                  <ellipse cx="183" cy="128" rx="7" ry="8" fill="white"/>
-                  <ellipse cx="217" cy="128" rx="7" ry="8" fill="white"/>
-                  <circle cx="185" cy="129" r="4" fill="#2c1810"/>
-                  <circle cx="219" cy="129" r="4" fill="#2c1810"/>
-                  <circle cx="186" cy="127" r="1.5" fill="white"/>
-                  <circle cx="220" cy="127" r="1.5" fill="white"/>
-                  <path d="M185 148 Q200 160 215 148" stroke="#c4836a" strokeWidth="2.5" fill="none" strokeLinecap="round"/>
-                  <path d="M176 118 Q183 114 190 118" stroke="#2c1810" strokeWidth="2" fill="none" strokeLinecap="round"/>
-                  <path d="M210 118 Q217 114 224 118" stroke="#2c1810" strokeWidth="2" fill="none" strokeLinecap="round"/>
-                  <circle cx="60" cy="100" r="40" fill="rgba(0,200,83,0.06)"/>
-                  <circle cx="350" cy="350" r="60" fill="rgba(255,214,0,0.06)"/>
-                </svg>
-              </div>
-              <div className="l-fc l-fc-1">
-                <div className="l-fc-label">This week's shifts</div>
-                <div className="l-shift-list">
-                  <div className="l-shift-item"><span>Ali K. — Morning</span><span className="l-badge l-badge-green">Confirmed</span></div>
-                  <div className="l-shift-item"><span>Zeynep A. — Evening</span><span className="l-badge l-badge-yellow">Pending</span></div>
-                  <div className="l-shift-item"><span>Mehmet S. — Morning</span><span className="l-badge l-badge-green">Confirmed</span></div>
+            {/* mockup */}
+            <div className="l-mockup">
+              <div className="l-mockup-dots"><span style={{ background: "#FF5F57" }} /><span style={{ background: "#FEBC2E" }} /><span style={{ background: "#28C840" }} /></div>
+              <div className="l-mock-hero">
+                <div>
+                  <div style={{ fontSize: 9, color: "#7C7A75" }}>İşveren Maliyeti · Haziran</div>
+                  <div style={{ fontSize: 19, fontWeight: 700, color: "#fff" }}>₺55.687</div>
                 </div>
+                <div style={{ fontSize: 9, color: "#00c853", display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 5, height: 5, borderRadius: "50%", background: "#00c853" }} />Canlı</div>
               </div>
-              <div className="l-fc l-fc-2">
-                <div className="l-fc-label">Labor cost ratio</div>
-                <div className="l-fc-value l-fc-green">28.4%</div>
-                <div className="l-fc-sub">↓ 3.2% vs last week</div>
+              <div className="l-mock-row">
+                <div className="l-mock-stat"><div style={{ fontSize: 15, fontWeight: 700, color: "#15803D" }}>%28,4</div><div style={{ fontSize: 8, color: "#8A867F" }}>işçilik oranı</div></div>
+                <div className="l-mock-stat"><div style={{ fontSize: 15, fontWeight: 700 }}>12</div><div style={{ fontSize: 8, color: "#8A867F" }}>aktif şube</div></div>
+                <div className="l-mock-stat"><div style={{ fontSize: 15, fontWeight: 700 }}>48</div><div style={{ fontSize: 8, color: "#8A867F" }}>personel</div></div>
               </div>
-              <div className="l-fc l-fc-3">
-                <div className="l-fc-label">Overtime alert</div>
-                <div className="l-fc-row">
-                  <div className="l-avatar" style={{background:"linear-gradient(135deg,#ffd600,#ff9800)"}}>⚠</div>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:500}}>Ali is at 43h</div>
-                    <div className="l-fc-sub" style={{fontSize:11}}>2h until overtime</div>
-                  </div>
-                </div>
-              </div>
+              <div className="l-mock-shift"><span style={{ fontSize: 10, color: "#15803D" }}>Dilek — Sabah vardiyası</span><span style={{ fontSize: 8, color: "#15803D", background: "#fff", padding: "1px 7px", borderRadius: 5 }}>Onaylı</span></div>
+              <div className="l-mock-shift" style={{ background: "#FEF6E7" }}><span style={{ fontSize: 10, color: "#C68A12" }}>Mert — Akşam vardiyası</span><span style={{ fontSize: 8, color: "#C68A12", background: "#fff", padding: "1px 7px", borderRadius: 5 }}>Bekliyor</span></div>
             </div>
           </div>
-        </section>
 
-        {/* TRUSTED */}
-        <div className="l-trusted">
-          <div className="l-trusted-label">Designed for</div>
-          <div style={{overflow:"hidden", flex:1}}>
-            <div className="l-logos">
-              {["Georgia Coffee & Chocolate","Restoran Zincirleri","Kafe İşletmeleri","Otel Grupları","Fast Casual Chains","Fine Dining Groups",
-                "Georgia Coffee & Chocolate","Restoran Zincirleri","Kafe İşletmeleri","Otel Grupları","Fast Casual Chains","Fine Dining Groups"
-              ].map((l,i) => <span key={i} className="l-logo-item">{l}</span>)}
-            </div>
+          {/* trust */}
+          <div className="l-hero-trust">
+            <div className="l-trust-label">Sahada<br />test ediliyor</div>
+            <div className="l-trust-div" />
+            <div className="l-trust-item" style={{ fontWeight: 600, color: "#fff" }}><i className="ti ti-coffee" style={{ fontSize: 16, color: "#00c853" }} />Georgia Coffee & Chocolate</div>
+            <div className="l-trust-item"><i className="ti ti-shield-check" style={{ fontSize: 15, color: "#00c853" }} />SGK Uyumlu</div>
+            <div className="l-trust-item"><i className="ti ti-lock" style={{ fontSize: 15, color: "#00c853" }} />KVKK</div>
           </div>
         </div>
 
-        {/* MODULES */}
-        <div className="l-modules" id="modules">
-          <div className="l-section-header reveal">
-            <div className="l-section-tag">✦ The Platform</div>
-            <h2 className="l-section-title">Everything your operation needs.<br/>Nothing it doesn't.</h2>
-            <p className="l-section-desc">8 integrated modules — from scheduling to AI forecasting — built for hospitality.</p>
+        {/* ============ STATS ============ */}
+        <div className="l-stats">
+          <div className="l-stat"><div className="l-stat-num" style={{ color: "#fff" }}>1 → 50</div><div className="l-stat-label">lokasyon, tek panel</div></div>
+          <div className="l-stat-div" />
+          <div className="l-stat"><div className="l-stat-num" style={{ color: "#fff" }}>6</div><div className="l-stat-label">modül, tek giriş</div></div>
+          <div className="l-stat-div" />
+          <div className="l-stat"><div className="l-stat-num" style={{ color: "#00c853" }}>0</div><div className="l-stat-label">excel gerekmez</div></div>
+          <div className="l-stat-div" />
+          <div className="l-stat"><div className="l-stat-num" style={{ color: "#fff" }}>%100</div><div className="l-stat-label">denetim kayıtlı finans</div></div>
+        </div>
+
+        {/* ============ MODULES ============ */}
+        <div className="l-section" id="modules">
+          <div className="reveal" style={{ maxWidth: 560 }}>
+            <div className="l-eyebrow">Platform</div>
+            <h2 className="l-h2">Tüm operasyon için<br />tek sistem.</h2>
+            <p className="l-lead">Aynı veriyi paylaşan altı modül — bir vardiya değişikliği bordroyu, bir sevkiyat finansı güncelliyor. Export yok, çift giriş yok.</p>
           </div>
-          <div className="l-modules-grid">
-            {[
-              {icon:"👥", title:"Workforce Management", desc:"Drag-and-drop scheduling, overtime alerts, and instant shift notifications.", status:"live", featured:true},
-              {icon:"📦", title:"Inventory Control", desc:"Real-time stock levels, recipe cost analysis, and automatic reorder triggers.", status:"dev"},
-              {icon:"⏱️", title:"Time Clock", desc:"Biometric check-in, GPS verification, and anti-fraud detection.", status:"dev"},
-              {icon:"💰", title:"HR & Payroll", desc:"Automated payroll with SGK compliance and Turkish labor law.", status:"soon"},
-              {icon:"💳", title:"Earned Wage Access", desc:"Let staff access earned pay before payday. Manager-approved.", status:"soon"},
-              {icon:"🤖", title:"AI Forecasting", desc:"Sales predictions using 2 years of data, weather, and local events.", status:"soon"},
-            ].map((m, i) => (
-              <div key={i} className={`l-module-card reveal reveal-d${i%3} ${m.featured?"featured":""}`}>
-                <div className="l-module-icon">{m.icon}</div>
-                <div className="l-module-title">{m.title}</div>
-                <div className="l-module-desc">{m.desc}</div>
+          <div className="l-modules">
+            {modules.map((m, i) => (
+              <div key={i} className={`l-mod reveal reveal-d${i % 3} ${m.featured ? "featured" : ""}`}>
+                <div className="l-mod-icon"><i className={`ti ${m.icon}`} style={{ fontSize: 20, color: m.featured ? "#00c853" : "#3C3A36" }} /></div>
+                <div className="l-mod-title">{m.title}</div>
+                <div className="l-mod-desc">{m.desc}</div>
                 <span className={`l-status l-status-${m.status}`}>
-                  {m.status==="live"?"● Live Now": m.status==="dev"?"In Development":"Coming Soon"}
+                  {m.status === "live" ? "● Canlı" : m.status === "dev" ? "Geliştiriliyor" : "Yakında"}
                 </span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* QUOTE */}
-        <div className="l-quote reveal" id="features">
-          <p className="l-quote-text">
-            "Managing 12 branches used to take<br/>my entire week. Now it takes <em>an hour.</em>"
-          </p>
-          <p className="l-quote-attr">— Operations Manager · Georgia Coffee & Chocolate, Istanbul</p>
-        </div>
-
-        {/* CTA */}
-        <div className="l-cta">
-          <div className="l-cta-glow"></div>
-          <div className="l-cta-title reveal">Ready to see<br/><em>WHITE.AI</em> in action?</div>
-          <p className="l-cta-desc reveal">We're onboarding early partners in Türkiye. Get a live demo and shape the product with us.</p>
-          <div className="l-cta-actions reveal">
-            <button className="l-btn-cta-primary" onClick={() => navigate("/app")}>Book a Demo →</button>
-            <button className="l-btn-cta-ghost" onClick={() => navigate("/app")}>Sign In</button>
+        {/* ============ HOW ============ */}
+        <div className="l-how">
+          <div className="l-section">
+            <div className="reveal" style={{ maxWidth: 520 }}>
+              <div className="l-eyebrow">Nasıl çalışır</div>
+              <h2 className="l-h2">Bir öğleden sonrada<br />kurulur, çeyrek dönemde değil.</h2>
+            </div>
+            <div className="l-steps">
+              {steps.map((s, i) => (
+                <div key={i} className={`l-step reveal reveal-d${i}`}>
+                  <div className="l-step-n">ADIM {s.n}</div>
+                  <div className="l-step-title">{s.title}</div>
+                  <div className="l-step-desc">{s.desc}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* FOOTER */}
+        {/* ============ QUOTE ============ */}
+        <div className="l-quote">
+          <div className="l-quote-stars reveal">★★★★★</div>
+          <p className="l-quote-text reveal">"12 şubeyi yönetmek tüm haftamı alıyordu.<br />Artık <em>bir saat</em> sürüyor."</p>
+          <p className="l-quote-attr reveal">Operasyon Müdürü · Georgia Coffee & Chocolate, İstanbul</p>
+        </div>
+
+        {/* ============ CTA ============ */}
+        <div className="l-cta">
+          <div className="l-cta-glow" />
+          <div className="l-cta-inner">
+            <h2 className="l-cta-title reveal">Operasyonunu yönetişini<br /><em>canlı</em> gör.</h2>
+            <p className="l-cta-desc reveal">Türkiye genelinde erken partnerleri sisteme alıyoruz. Canlı demo al, ürünü bizimle şekillendir.</p>
+            <div className="l-cta-actions reveal">
+              <button className="l-btn-hero-primary" onClick={() => navigate("/app")}>Demo Talep Et →</button>
+              <button className="l-btn-hero-secondary" onClick={() => navigate("/app")}>Giriş Yap</button>
+            </div>
+          </div>
+        </div>
+
+        {/* ============ FOOTER ============ */}
         <footer className="l-footer">
           <div className="l-footer-logo">WHITE<span>.</span>AI</div>
-          <div className="l-footer-copy">© 2026 WHITE.AI. All rights reserved.</div>
+          <div className="l-footer-copy">© 2026 WHITE.AI · İstanbul, Türkiye</div>
           <div className="l-footer-links">
-            <a href="#">Platform</a>
-            <a href="#">Privacy</a>
-            <a onClick={() => navigate("/app")} style={{cursor:"pointer"}}>Sign In</a>
+            <a>Platform</a>
+            <a>Gizlilik</a>
+            <a onClick={() => navigate("/app")}>Giriş Yap</a>
           </div>
         </footer>
       </div>

@@ -56,8 +56,21 @@ class ShiftAssignment(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     shift_id: Mapped[str] = mapped_column(String, ForeignKey("shifts.id"), nullable=False)
-    employee_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    employee_id: Mapped[str] = mapped_column(String, ForeignKey("employees.id"), nullable=False)
     status: Mapped[AssignmentStatus] = mapped_column(SAEnum(AssignmentStatus), default=AssignmentStatus.ASSIGNED, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     shift: Mapped["Shift"] = relationship("Shift", back_populates="assignments")
+
+
+class ShiftTemplate(Base):
+    """Manager-defined reusable shift type (e.g. 'Sabah 08:00-16:00').
+    Branch-scoped; each branch maintains its own set of templates."""
+    __tablename__ = "shift_templates"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    branch_id: Mapped[str] = mapped_column(String, ForeignKey("branches.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    start_label: Mapped[str] = mapped_column(String(5), nullable=False)   # "08:00"
+    end_label: Mapped[str] = mapped_column(String(5), nullable=False)     # "16:00"
+    color: Mapped[str] = mapped_column(String(20), nullable=False, default="green")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

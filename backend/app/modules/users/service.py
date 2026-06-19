@@ -102,9 +102,22 @@ class UserService:
         # Prevent self-deletion
         if user_id == admin_id:
             raise BadRequestException("You cannot deactivate your own account.")
-
         user = await self.get_user(db, user_id)
         user.is_active = False
+        db.add(user)
+        await db.flush()
+
+    async def reset_user_password(
+        self, db: AsyncSession, user_id: str, admin_id: str, admin_password: str, new_password: str
+    ) -> None:
+        """Reset a user's password, verified by the acting admin's password."""
+        admin = await self.get_user(db, admin_id)
+        if not verify_password(admin_password, admin.hashed_password):
+            raise BadRequestException("Incorrect admin password.")
+        if not new_password or len(new_password) < 6:
+            raise BadRequestException("New password must be at least 6 characters.")
+        user = await self.get_user(db, user_id)
+        user.hashed_password = hash_password(new_password)
         db.add(user)
         await db.flush()
 

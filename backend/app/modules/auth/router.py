@@ -6,7 +6,6 @@ Router catches incoming requests and delegates to AuthService.
 No business logic here — only request/response handling.
 
 Endpoints:
-  POST /auth/register         — Register a new user
   POST /auth/login            — Login and receive tokens
   POST /auth/refresh          — Get a new access token using refresh token
   POST /auth/logout           — Invalidate the current access token
@@ -20,22 +19,15 @@ from app.core.database import get_db
 from app.core.security import decode_token
 from app.core.exceptions import UnauthorizedException
 from app.modules.auth.schemas import (
-    UserRegisterSchema,
     UserLoginSchema,
     TokenRefreshSchema,
     TokenResponseSchema,
-    UserResponseSchema,
     ChangePasswordSchema,
 )
 from app.modules.auth.service import auth_service
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 security = HTTPBearer()
-
-@router.post("/register", response_model=UserResponseSchema)
-async def register(data: UserRegisterSchema, db: AsyncSession = Depends(get_db)):
-    user = await auth_service.register(db, data)
-    return user
 
 @router.post("/login", response_model=TokenResponseSchema)
 async def login(data: UserLoginSchema, db: AsyncSession = Depends(get_db)):

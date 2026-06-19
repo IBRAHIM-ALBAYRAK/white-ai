@@ -195,9 +195,8 @@ function AttendanceTab({ employee, token }: { employee: EmployeeProfile; token: 
     (async () => {
       if (!employee.branch_id) { setLoading(false); return; }
       try {
-        const res = await axios.get(`${API_URL}/timeclock/branch/${employee.branch_id}`, { headers });
-        // Only this employee's own records
-        setRecords(res.data.filter((r: any) => r.employee_id === employee.id));
+        const res = await axios.get(`${API_URL}/timeclock/employee/${employee.id}/${employee.branch_id}`, { headers });
+        setRecords(res.data);
       } catch { } finally { setLoading(false); }
     })();
   }, [employee.id]);
@@ -270,19 +269,92 @@ function AttendanceTab({ employee, token }: { employee: EmployeeProfile; token: 
 
 // ── Payslip (placeholder) ───────────────────────────────────────────────────────
 
-function PayslipTab({ employee }: { employee: EmployeeProfile }) {
+const AYLAR_EP = ["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+const fmtTL = (n: number | null | undefined) =>
+  n == null ? "—" : Number(n).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function PayslipTab({ employee, token }: { employee: EmployeeProfile; token: string }) {
+  const [slips, setSlips] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const year = new Date().getFullYear();
+  const headers = { Authorization: `Bearer ${token}` };
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await axios.get(`${API_URL}/payroll/employee/${employee.id}/${year}`, { headers });
+        setSlips(res.data);
+      } catch { setSlips([]); } finally { setLoading(false); }
+    })();
+  }, [employee.id]);
+
   return (
     <div>
       <h1 className="ep-page-title">Bordro Özetim</h1>
-      <p className="ep-page-sub">Aylık net maaşın, kesintilerin ve bordro detayların.</p>
-      <div className="ep-placeholder">
-        <div className="ep-placeholder-icon">💰</div>
-        <div className="ep-placeholder-title">Yakında</div>
-        <p className="ep-placeholder-text">
-          HR &amp; Payroll modülü tamamlandığında, aylık bordro özetin — brüt, net,
-          SGK ve vergi kesintilerinle birlikte — burada görünecek.
-        </p>
-      </div>
+      <p className="ep-page-sub">Aylık net maaşın, kesintilerin ve bordro detayların ({year}).</p>
+
+      {loading ? (
+        <p style={{ fontSize: 14, color: "#9b9b93" }}>Yükleniyor...</p>
+      ) : slips.length === 0 ? (
+        <div className="ep-placeholder">
+          <div className="ep-placeholder-icon">💰</div>
+          <div className="ep-placeholder-title">Bordron henüz hazırlanmadı</div>
+          <p className="ep-placeholder-text">
+            Yöneticin bu yıla ait bordronu hesapladığında, aylık net maaşın — brüt,
+            SGK ve vergi kesintilerinle birlikte — burada görünecek.
+          </p>
+        </div>
+      ) : (
+        <div>
+        <div className="ep-card" style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(135deg,#0a0a0a,#1a1a1a)", border: "none" }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>
+              {AYLAR_EP[slips[slips.length-1].month-1]} Net Maaşın
+            </div>
+            <div style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontSize: 34, fontWeight: 800, color: "#00e676", letterSpacing: "-0.02em" }}>
+              ₺{fmtTL(slips[slips.length-1].net_salary)}
+            </div>
+          </div>
+          <div style={{ textAlign: "right", color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+            <div>Brüt: ₺{fmtTL(slips[slips.length-1].gross)}</div>
+            <div style={{ marginTop: 4 }}>{slips[slips.length-1].sgk_days} gün</div>
+          </div>
+        </div>
+        <div className="ep-card" style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f8f7f4", borderBottom: "1px solid #e5e4e0" }}>
+                  <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 700, color: "#5a5a54" }}>Ay</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px", fontWeight: 700, color: "#5a5a54" }}>Gün</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px", fontWeight: 700, color: "#5a5a54" }}>Brüt</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px", fontWeight: 700, color: "#5a5a54" }}>SGK İşçi</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px", fontWeight: 700, color: "#5a5a54" }}>İşsizlik İşçi</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px", fontWeight: 700, color: "#5a5a54" }}>Gelir Vergisi</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px", fontWeight: 700, color: "#5a5a54" }}>Damga Vergisi</th>
+                  <th style={{ textAlign: "right", padding: "12px 16px", fontWeight: 700, color: "#0a0a0a" }}>Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slips.map((s) => (
+                  <tr key={s.month} style={{ borderBottom: "1px solid #f2f1ee" }}>
+                    <td style={{ padding: "12px 16px", fontWeight: 600 }}>{AYLAR_EP[s.month - 1]}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", color: "#9b9b93" }}>{s.sgk_days}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>{fmtTL(s.gross)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>{fmtTL(s.sgk_employee)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>{fmtTL(s.unemployment_employee)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>{fmtTL(s.income_tax_net)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>{fmtTL(s.stamp_tax_net)}</td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700, color: "#00a843" }}>{fmtTL(s.net_salary)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              </table>
+          </div>
+        </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -554,7 +626,7 @@ export default function EmployeePortal({
     switch (tab) {
       case "schedule": return <ScheduleTab />;
       case "attendance": return <AttendanceTab employee={employee} token={token} />;
-      case "payslip": return <PayslipTab employee={employee} />;
+      case "payslip": return <PayslipTab employee={employee} token={token} />;
       case "leaves": return <LeavesTab employee={employee} token={token} />;
       case "announcements": return <AnnouncementsTab employee={employee} token={token} />;
       case "documents": return <DocumentsTab employee={employee} token={token} />;

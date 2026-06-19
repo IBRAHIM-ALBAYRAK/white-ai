@@ -90,3 +90,11 @@ class EmployeeResponseSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
+
+# --- Franchise roster (KVKK: yalnizca isim/pozisyon/durum) ---
+class FranchiseEmployeeSchema(BaseModel):
+    first_name: str
+    last_name: str
+    position: Optional[str] = None
+    is_active: bool
+    model_config = {"from_attributes": True}
